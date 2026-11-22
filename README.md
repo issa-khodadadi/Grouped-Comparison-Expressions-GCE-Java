@@ -170,4 +170,4 @@ See [docs/ROADMAP.md](docs/ROADMAP.md). Version 0.3 is the place for `instanceof
 
 ## License
 
-No license is specified yet. Treat the tree as source shared for the experiment until one is added.
+See [LICENSE](https://github.com/issa-khodadadi/Grouped-Comparison-Expressions-GCE-Java/blob/main/LICENSE)
