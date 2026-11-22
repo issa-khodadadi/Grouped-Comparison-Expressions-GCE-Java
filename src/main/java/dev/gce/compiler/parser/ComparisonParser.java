@@ -1,5 +1,6 @@
 package dev.gce.compiler.parser;
 
+import dev.gce.compiler.GceLimits;
 import dev.gce.compiler.GceSyntaxException;
 import dev.gce.compiler.SourceLocations;
 import dev.gce.compiler.ast.AndCondition;
@@ -25,6 +26,7 @@ final class ComparisonParser {
     private final String fullSource;
     private final int baseOffset;
     private int position;
+    private int depth;
 
     ComparisonParser(List<Token> tokens, String fullSource, int baseOffset) {
         this.tokens = tokens;
@@ -40,18 +42,110 @@ final class ComparisonParser {
         this.position = position;
     }
 
+    void rejectAt(int tokenIndex, String detail) {
+        jump(tokenIndex);
+        throw error(detail);
+    }
+
+    /** A parenthesized type followed by a cast operand, such as {@code (int) raw} or {@code (String) s}. */
+    boolean isCastPattern(int openParen) {
+        int after = typeParenEnd(openParen);
+        return after >= 0 && startsCastOperand(after, primitiveParen(openParen));
+    }
+
+    /** Token index immediately after the closing parenthesis of a type in parentheses, or {@code -1}. */
+    int typeParenEnd(int open) {
+        if (open >= tokens.size() || tokens.get(open).type() != TokenType.LPAREN) {
+            return -1;
+        }
+        int index = open + 1;
+        if (index >= tokens.size()) {
+            return -1;
+        }
+        Token token = tokens.get(index);
+        if (token.type() == TokenType.KEYWORD && Keywords.isPrimitive(token.lexeme())) {
+            index++;
+        } else if (token.type() == TokenType.IDENTIFIER) {
+            index++;
+            while (index < tokens.size()) {
+                if (tokens.get(index).type() == TokenType.LT) {
+                    int after = AngleBrackets.skip(tokens, index);
+                    if (after < 0) {
+                        return -1;
+                    }
+                    index = after;
+                    continue;
+                }
+                if (tokens.get(index).type() == TokenType.DOT
+                        && index + 1 < tokens.size()
+                        && tokens.get(index + 1).type() == TokenType.IDENTIFIER) {
+                    index += 2;
+                    continue;
+                }
+                break;
+            }
+        } else {
+            return -1;
+        }
+        while (index + 1 < tokens.size()
+                && tokens.get(index).type() == TokenType.LBRACKET
+                && tokens.get(index + 1).type() == TokenType.RBRACKET) {
+            index += 2;
+        }
+        if (index < tokens.size() && tokens.get(index).type() == TokenType.RPAREN) {
+            return index + 1;
+        }
+        return -1;
+    }
+
+    private boolean primitiveParen(int open) {
+        int inner = open + 1;
+        return inner < tokens.size()
+                && tokens.get(inner).type() == TokenType.KEYWORD
+                && Keywords.isPrimitive(tokens.get(inner).lexeme());
+    }
+
+    private boolean startsCastOperand(int index, boolean primitiveType) {
+        if (index >= tokens.size()) {
+            return false;
+        }
+        Token token = tokens.get(index);
+        return switch (token.type()) {
+            case IDENTIFIER, NUMBER, STRING, CHAR, TEXT_BLOCK, BOOLEAN, NULL, LPAREN, BANG, TILDE, PLUSPLUS, MINUSMINUS -> true;
+            case PLUS, MINUS -> primitiveType;
+            case KEYWORD -> token.lexeme().equals("new") || token.lexeme().equals("this") || token.lexeme().equals("super");
+            default -> false;
+        };
+    }
+
+    private void enter() {
+        if (depth >= GceLimits.MAX_NESTING) {
+            throw error("nesting is too deep");
+        }
+        depth++;
+    }
+
+    private void leave() {
+        depth--;
+    }
+
     ComparisonNode parseGroup() {
-        Token open = peek();
-        expect(TokenType.LPAREN, "'('");
-        if (peek().isKeyword("instanceof")) {
-            throw error("GCE instanceof is not supported in version 0.2; it is planned for version 0.3");
+        enter();
+        try {
+            Token open = peek();
+            expect(TokenType.LPAREN, "'('");
+            if (peek().isKeyword("instanceof")) {
+                throw error("GCE instanceof is not supported in version 0.2; it is planned for version 0.3");
+            }
+            ComparisonNode condition = parseOr();
+            expect(TokenType.RPAREN, "')'");
+            if (condition == null) {
+                throw at(open, "empty comparison group");
+            }
+            return condition;
+        } finally {
+            leave();
         }
-        ComparisonNode condition = parseOr();
-        expect(TokenType.RPAREN, "')'");
-        if (condition == null) {
-            throw at(open, "empty comparison group");
-        }
-        return condition;
     }
 
     private ComparisonNode parseOr() {
@@ -72,9 +166,14 @@ final class ComparisonParser {
 
     private ComparisonNode parseTerm() {
         if (match(TokenType.LPAREN)) {
-            ComparisonNode inner = parseOr();
-            expect(TokenType.RPAREN, "')'");
-            return new ParenthesizedCondition(inner);
+            enter();
+            try {
+                ComparisonNode inner = parseOr();
+                expect(TokenType.RPAREN, "')'");
+                return new ParenthesizedCondition(inner);
+            } finally {
+                leave();
+            }
         }
         if (!peek().isComparisonOperator()) {
             throw error("expected a comparison operator (==, !=, <, <=, >, >=) or '(' but found " + describe(peek()));
@@ -121,9 +220,14 @@ final class ComparisonParser {
             parseBitwiseOr();
         }
         if (match(TokenType.QUESTION)) {
-            parseConditional(true);
-            expect(TokenType.COLON, "':'");
-            parseConditional(allowLogic);
+            enter();
+            try {
+                parseConditional(true);
+                expect(TokenType.COLON, "':'");
+                parseConditional(allowLogic);
+            } finally {
+                leave();
+            }
         }
     }
 
@@ -210,10 +314,18 @@ final class ComparisonParser {
 
     private void parseUnary() {
         TokenType type = peek().type();
-        if (type == TokenType.PLUS || type == TokenType.MINUS || type == TokenType.BANG || type == TokenType.TILDE
-                || type == TokenType.PLUSPLUS || type == TokenType.MINUSMINUS) {
+        if (type == TokenType.PLUSPLUS || type == TokenType.MINUSMINUS) {
+            throw error((type == TokenType.PLUSPLUS ? "prefix increment" : "prefix decrement")
+                    + " is not supported in a GCE operand");
+        }
+        if (type == TokenType.PLUS || type == TokenType.MINUS || type == TokenType.BANG || type == TokenType.TILDE) {
             position++;
-            parseUnary();
+            enter();
+            try {
+                parseUnary();
+            } finally {
+                leave();
+            }
             return;
         }
         parsePostfix();
@@ -223,6 +335,9 @@ final class ComparisonParser {
         parsePrimary();
         while (true) {
             if (match(TokenType.DOT)) {
+                if (peek().isKeyword("new")) {
+                    throw error("qualified instance creation is not supported in a GCE operand");
+                }
                 if (check(TokenType.LT)) {
                     int after = AngleBrackets.skip(tokens, position);
                     if (after < 0) {
@@ -264,8 +379,9 @@ final class ComparisonParser {
                 }
                 continue;
             }
-            if (match(TokenType.PLUSPLUS) || match(TokenType.MINUSMINUS)) {
-                continue;
+            if (check(TokenType.PLUSPLUS) || check(TokenType.MINUSMINUS)) {
+                throw error((peek().type() == TokenType.PLUSPLUS ? "postfix increment" : "postfix decrement")
+                        + " is not supported in a GCE operand");
             }
             break;
         }
@@ -273,10 +389,18 @@ final class ComparisonParser {
 
     private void parsePrimary() {
         if (check(TokenType.LPAREN)) {
-            position++;
-            parseConditional(true);
-            rejectTrailingOperandSyntax();
-            expect(TokenType.RPAREN, "')'");
+            if (isCastPattern(position)) {
+                throw error("casts are not supported in a GCE operand");
+            }
+            enter();
+            try {
+                position++;
+                parseConditional(true);
+                rejectTrailingOperandSyntax();
+                expect(TokenType.RPAREN, "')'");
+            } finally {
+                leave();
+            }
             return;
         }
         if (matchKeyword("new")) {

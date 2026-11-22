@@ -83,7 +83,7 @@ final class JavaRunner {
                 null,
                 files,
                 diagnostics,
-                List.of("--release", "25"),
+                List.of("--release", "25", "--class-path", System.getProperty("java.class.path")),
                 null,
                 List.of(new SourceFile(className, source)));
         boolean success = Boolean.TRUE.equals(task.call());

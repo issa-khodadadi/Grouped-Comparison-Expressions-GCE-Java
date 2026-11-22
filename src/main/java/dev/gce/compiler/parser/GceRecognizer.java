@@ -40,18 +40,54 @@ public final class GceRecognizer {
         List<Replacement> found = new ArrayList<>();
         int index = 0;
         while (index < tokens.size() && tokens.get(index).type() != TokenType.EOF) {
-            if (!canStart(tokens.get(index))) {
+            Token token = tokens.get(index);
+            if (isIncDec(token.type())) {
+                int cursor = index;
+                while (cursor < tokens.size() && isIncDec(tokens.get(cursor).type())) {
+                    cursor++;
+                }
+                int end = tryPostfix(cursor);
+                while (end < tokens.size() && isIncDec(tokens.get(end).type())) {
+                    end++;
+                }
+                if (end > cursor && parser.isGroupStart(end)) {
+                    parser.rejectAt(index, prefixMessage(token.type()) + " in a GCE subject");
+                }
+                index++;
+                continue;
+            }
+            if (token.type() == TokenType.LPAREN && parser.isCastPattern(index)) {
+                int cursor = parser.typeParenEnd(index);
+                while (cursor < tokens.size() && isUnaryPrefix(tokens.get(cursor).type())) {
+                    cursor++;
+                }
+                int end = cursor < tokens.size() ? tryPostfix(cursor) : cursor;
+                while (end < tokens.size() && isIncDec(tokens.get(end).type())) {
+                    end++;
+                }
+                if (parser.isGroupStart(end)) {
+                    parser.rejectAt(index, "casts are not supported in a GCE subject");
+                }
+            }
+            if (!canStart(token)) {
                 index++;
                 continue;
             }
             int end = tryPostfix(index);
+            int afterInc = end;
+            while (afterInc < tokens.size() && isIncDec(tokens.get(afterInc).type())) {
+                afterInc++;
+            }
+            if (afterInc != end && parser.isGroupStart(afterInc)) {
+                parser.rejectAt(end, postfixMessage(tokens.get(end).type()) + " in a GCE subject");
+            }
             if (end > index && parser.isGroupStart(end)) {
                 parser.jump(end);
                 ComparisonNode condition = parser.parseGroup();
                 int subjectStart = tokens.get(index).start();
                 int subjectEnd = tokens.get(end - 1).end();
                 int rangeEnd = tokens.get(parser.position() - 1).end();
-                String subject = fragment.substring(subjectStart, subjectEnd);
+                String subject = operands.apply(subjectStart, subjectEnd);
                 String temp = freshName();
                 String code = generator.generate(subject, condition, temp, operands);
                 found.add(new Replacement(subjectStart, rangeEnd, code));
@@ -61,6 +97,27 @@ public final class GceRecognizer {
             index++;
         }
         return found;
+    }
+
+    private static boolean isIncDec(TokenType type) {
+        return type == TokenType.PLUSPLUS || type == TokenType.MINUSMINUS;
+    }
+
+    private static boolean isUnaryPrefix(TokenType type) {
+        return isIncDec(type) || type == TokenType.PLUS || type == TokenType.MINUS
+                || type == TokenType.BANG || type == TokenType.TILDE;
+    }
+
+    private static String prefixMessage(TokenType type) {
+        return type == TokenType.PLUSPLUS
+                ? "prefix increment is not supported"
+                : "prefix decrement is not supported";
+    }
+
+    private static String postfixMessage(TokenType type) {
+        return type == TokenType.PLUSPLUS
+                ? "postfix increment is not supported"
+                : "postfix decrement is not supported";
     }
 
     private String freshName() {
@@ -86,6 +143,8 @@ public final class GceRecognizer {
         if (pos == start) {
             return start;
         }
+        boolean sawQualifiedNew = false;
+        int qualifiedAt = -1;
         while (pos < tokens.size() && tokens.get(pos).type() != TokenType.EOF) {
             TokenType type = tokens.get(pos).type();
             if (type == TokenType.DOT) {
@@ -93,6 +152,16 @@ public final class GceRecognizer {
                     break;
                 }
                 Token next = tokens.get(pos + 1);
+                if (next.isKeyword("new")) {
+                    int after = tryNew(pos + 1);
+                    if (after < 0) {
+                        break;
+                    }
+                    sawQualifiedNew = true;
+                    qualifiedAt = pos + 1;
+                    pos = after;
+                    continue;
+                }
                 if (next.type() == TokenType.LT) {
                     int after = AngleBrackets.skip(tokens, pos + 1);
                     if (after < 0 || after >= tokens.size() || tokens.get(after).type() != TokenType.IDENTIFIER) {
@@ -125,6 +194,9 @@ public final class GceRecognizer {
                 continue;
             }
             break;
+        }
+        if (sawQualifiedNew && parser.isGroupStart(pos)) {
+            parser.rejectAt(qualifiedAt, "qualified instance creation is not supported in a GCE subject");
         }
         return pos;
     }

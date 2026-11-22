@@ -23,8 +23,6 @@ import java.util.Set;
  * accept every Java program. See {@code docs/GCE-LANGUAGE-SPECIFICATION.md}.
  */
 public final class GceTranspiler {
-    private static final int MAX_DEPTH = 32;
-
     /** Translates {@code source}, which may be a compilation unit or a fragment. */
     public String transpile(String source) {
         Objects.requireNonNull(source, "source");
@@ -32,10 +30,10 @@ public final class GceTranspiler {
     }
 
     private String rewrite(String fragment, Set<String> reserved, String fullSource, int baseOffset, int depth, boolean collectNames) {
-        if (depth > MAX_DEPTH) {
+        if (depth > GceLimits.MAX_NESTING) {
             int[] position = SourceLocations.position(fullSource, baseOffset);
             throw new GceSyntaxException(
-                    "GCE nesting is too deep",
+                    "nesting is too deep",
                     baseOffset,
                     position[0],
                     position[1]);

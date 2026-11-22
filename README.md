@@ -44,18 +44,16 @@ var ageValue = age;
 ageValue >= 18 && ageValue <= 65
 ```
 
-A local variable cannot be declared in the middle of an arbitrary expression without changing when the subject runs. `flag && age (>= 18)` must not read `age` when `flag` is false. Version 0.2 therefore emits a supplier that runs only when the group itself is evaluated:
+A local variable cannot be declared in the middle of an arbitrary expression without changing when the subject runs. `flag && age (>= 18)` must not read `age` when `flag` is false. Version 0.2.1 therefore calls a small runtime method. The subject is an argument, so it runs only when that call runs:
 
 ```java
-(((java.util.function.Supplier<Boolean>) () -> {
-    var $gce$0 = (age);
-    return (($gce$0 >= (18)) && ($gce$0 <= (65)));
-}).get())
+(dev.gce.runtime.GceEval.of((age)).is($gce$0 ->
+        (($gce$0 >= (18)) && ($gce$0 <= (65)))))
 ```
 
-`var` keeps the subject's real type, primitive or reference. A fixed name such as `__gce_value` is not used; the translator picks `$gce$0`, `$gce$1`, … and skips any identifier already present in the file.
+`of` is overloaded for `boolean`, `int`, `long`, `double`, and reference types. A primitive stays unboxed, so `int == Integer` is numeric and `Integer == Integer` stays identity. `char`, `byte`, and `short` widen to `int`. `float` widens to `double`. The translator picks `$gce$0`, `$gce$1`, … and skips any identifier already present in the file.
 
-The older `dev.gce.runtime.Gce.test` helper is still in the jar for direct calls, but the translator does not emit it. A generic `Supplier`/`Predicate` pair would box primitives and can change the meaning of `==`.
+`dev.gce.runtime.Gce.test` is still in the jar for direct calls. The translator does not emit it. That helper boxes its subject, and after boxing `==` can disagree with primitive equality.
 
 ## Architecture
 
@@ -69,10 +67,10 @@ Unicode-escape decode and lexer
 Recognizer: postfix subject + comparison group
         |
         v
-Comparison AST  --->  operand expressions re-scanned for nested groups
+Comparison AST  --->  subjects and operands re-scanned for nested groups
         |
         v
-Java expression using Supplier<Boolean> and var
+Java expression: GceEval.of(subject).is(temp -> predicate)
         |
         v
 Unchanged surrounding source
@@ -92,8 +90,10 @@ Lexical analysis, the comparison grammar, the AST, and code generation are separ
 
 ```bash
 mvn test
-mvn package
+mvn clean verify
 ```
+
+`mvnw` / `mvnw.cmd` is the Maven Wrapper (Maven 3.9.9). GitHub Actions runs `bash mvnw -B verify` on JDK 25.
 
 `mvn test` rewrites sample programs, compiles them with the JDK 25 compiler API, runs them, and compares the output with equivalent ordinary Java.
 
@@ -102,10 +102,12 @@ mvn package
 Translate one file. The program writes the second path as UTF-8 and creates its folder:
 
 ```bash
-java -jar target/gce-compiler-0.2.0.jar Input.java out/Input.java
-javac --release 25 out/Input.java
-java -cp out Input
+java -jar target/gce-compiler-0.2.1.jar Input.java out/Input.java
+javac --release 25 -cp target/gce-compiler-0.2.1.jar out/Input.java
+java -cp "out;target/gce-compiler-0.2.1.jar" Input
 ```
+
+On Unix the classpath separator is `:`. The translated file calls `dev.gce.runtime.GceEval`, so the jar has to be on the classpath at compile time and at run time.
 
 The output file name has to match a `public class` inside it. `public class Input` cannot be compiled from `Output.java`.
 
@@ -130,7 +132,7 @@ java -cp target/classes;target/test-classes dev.gce.compiler.GceBenchmark
 
 On Windows the classpath separator is `;`. On Unix it is `:`.
 
-## What version 0.2 implements
+## What version 0.2.1 implements
 
 - Several comparisons of one subject, with `==`, `!=`, `<`, `<=`, `>`, `>=`
 - `&&` and `||`, with Java precedence and left associativity, plus nested parentheses
@@ -139,7 +141,8 @@ On Windows the classpath separator is `;`. On Unix it is `:`.
 - Subjects that are names, `this`, `super`, field and method chains, calls with arguments, array access, `new`, and parenthesized expressions
 - A parenthesized binary expression as a subject: `(low + high) (>= 0)`
 - Ordinary Java mixed with GCE in one expression
-- One evaluation of each subject, including subjects nested inside an operand
+- One evaluation of each subject, including a group nested in an operand or in a subject call, parenthesized subject, or subject index
+- A subject that is a reassigned local, a `for`-loop index, or `array[i]` while `i` changes
 - Short-circuit of both the group and the surrounding expression
 - No rewrite inside comments, string literals, character literals, or text blocks
 - Syntax errors that name the line and column
@@ -152,12 +155,14 @@ The translator is not a Java compiler and does not accept every Java program.
 - `age (>= 18 < 65)` is `age >= (18 < 65)`, not a range. A range is `age (>= 18 && < 65)`.
 - At parenthesis depth zero, `&&` and `||` always separate comparisons. Put them in parentheses when they belong to an operand: `(>= (ready && paid))`.
 - `instanceof` is not a GCE operator yet. `value (instanceof String)` is a syntax error. `instanceof` inside a parenthesized operand is ordinary Java and is limited to a type, without a pattern variable.
+- Casts, prefix and postfix `++`/`--`, and qualified `holder.new Inner()` are rejected when they are the GCE subject or operand. The same tokens in ordinary Java, including inside a subject call's argument list, are left unchanged.
 - Lambdas, method references, assignments, and `switch` expressions are rejected as operands.
-- The generated supplier cannot throw a checked exception. A subject or operand that throws one is rejected by `javac`.
-- `var` cannot infer a subject whose type is only `null`.
+- A checked exception from the subject propagates. A checked exception from an operand does not: the predicate is a lambda, and `javac` rejects it.
+- An operand that names a local variable still captures that variable. The local has to be effectively final. The subject does not.
 - Comments that occur inside the replaced span, between the subject and the closing parenthesis of the group, are not copied into the output.
 - A `>>` or `>>>` token is not split when only part of it closes a type-argument list.
-- Translation expands the source. On one JDK 25.0.2 workstation run, 1,000 groups grew from 24,812 characters to 135,482 (about 5.5×) and took about 11 ms after warmup. A 2,000,000-iteration loop was about 0.74 ms in ordinary Java and about 0.87 ms after translation. Those figures are one run, not a JMH result, and they are not a claim that the translated form is faster.
+- More than 64 nested groups, parentheses, unary operators, or conditional operators is a syntax error.
+- Translation expands the source and allocates one small chain object whenever a group is evaluated. A single JDK 25.0.2 workstation run of the older 0.2 supplier, not of this lowering, grew 1,000 groups from 24,812 characters to 135,482 and took about 11 ms after warmup. Those figures are not a JMH result and are not a claim about 0.2.1.
 
 ## Roadmap
 

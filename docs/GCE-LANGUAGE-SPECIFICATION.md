@@ -1,6 +1,6 @@
 # GCE Language Specification
 
-**Status:** version 0.2, implemented by this repository.  
+**Status:** version 0.2.1, implemented by this repository.  
 **This is not a JLS change and it is not implemented by `javac`.**
 
 Sections marked **Implemented** describe behavior covered by the translator and tests. Sections marked **Proposed** are not accepted by version 0.2.
@@ -95,7 +95,7 @@ Implemented operand forms:
 - string, character, and text-block literals
 - `true`, `false`, and `null`
 - names, fields, calls, and array access
-- unary `+ - ! ~ ++ --` and postfix `++ --`
+- unary `+ - ! ~`
 - `* / % + - << >> >>> < > <= >= instanceof == != & ^ |`
 - the conditional operator `?:`
 - `new`, including an anonymous class body or array initializer scanned as a balanced `{ ... }` span
@@ -106,6 +106,9 @@ Rejected operand forms, with a GCE syntax error:
 - assignment and compound assignment
 - lambdas and method references
 - `switch` expressions
+- casts (`(int) raw`, `(String) value`)
+- prefix and postfix `++` and `--`
+- qualified instance creation (`holder.new Inner()`)
 - pattern variables after `instanceof` (`instanceof String s`)
 - a GCE `instanceof` operator (section 8)
 
@@ -161,7 +164,7 @@ Juxtaposition does not create another comparison. `age (>= 18 < 65)` is one term
 
 ## 5. Types (**Implemented by delegation**)
 
-Version 0.2 does not type-check. It preserves the subject type by declaring `var temporary = (subject)` and then emits a normal Java comparison. `javac` applies the usual rules:
+Version 0.2.1 does not type-check. It passes the subject to `dev.gce.runtime.GceEval.of` and lets overload resolution choose a primitive chain (`boolean`, `int`, `long`, `double`) or a reference chain. `javac` then applies the usual rules:
 
 - relational operators unbox numeric wrappers
 - `==` and `!=` on two references compare identity, including `String` and enum constants
@@ -169,8 +172,11 @@ Version 0.2 does not type-check. It preserves the subject type by declaring `var
 - `int == null` remains illegal
 - `Integer >= 0` when the value is null throws `NullPointerException`
 - `!= null && >= 0` does not unbox when the null test is false
+- `char`, `byte`, and `short` subjects widen to `int`
+- `float` subjects widen to `double`. Every `float` value is exactly representable as a `double`
+- a `null` literal is a reference subject
 
-There is no separate GCE type lattice.
+There is no separate GCE type lattice. Compiling the translation requires `gce-compiler` on the classpath, because the generated expression calls `GceEval`.
 
 ## 6. Evaluation (**Implemented**)
 
@@ -181,11 +187,15 @@ For a group that is actually evaluated:
 3. Do not evaluate the right operand of `&&` or `||` when the left operand decides the result.
 4. Evaluate a comparison's operand only when that comparison is reached. The operand runs after the subject.
 
-The group itself is evaluated only when the surrounding Java expression reaches it. `false && next() (>= 0)` does not call `next()`.
+The group itself is evaluated only when the surrounding Java expression reaches it. `false && next() (>= 0)` does not call `next()`, because `next()` is an argument of the call that the `&&` skips.
+
+The subject expression is that argument, so it is type-checked in the enclosing method. A local variable used only as the subject does not have to be effectively final, and a checked exception thrown by the subject propagates. The predicate lambda still captures every local variable named in an operand, and a checked exception thrown by an operand is still illegal.
 
 This is not the same as copying the subject text onto every comparison. That expansion would run side effects once per comparison.
 
 Nested groups follow the same rules. In `flag (== (next() (>= 1 && <= 1)))` the outer subject is `flag` and the inner subject is `next()`. Each runs once, and `next()` runs only because the outer comparison is reached.
+
+A group inside the subject is rewritten before the outer group is emitted. In `id(age() (>= 18)) (>= 1)` the call `age()` runs once, while `id` is evaluating its argument, and the outer comparison then uses `id`'s result. The same rewrite applies to a parenthesized subject and to an array index that belongs to an outer subject.
 
 ## 7. Examples (**Implemented**)
 
@@ -221,16 +231,21 @@ if (age (>= 18)) { }      // this one is a group
 - `instanceof` used as the operator of a group
 - a missing operand, a missing parenthesis, or two operands with no operator
 - assignment, lambda, method reference, or `switch` expression in an operand
+- a cast used as a GCE subject or operand
+- prefix or postfix `++` or `--` used as a GCE subject or operand
+- qualified instance creation (`holder.new Inner()`) used as a GCE subject or operand
 - pattern-matching `instanceof` in an operand
 - an unclosed string, character literal, text block, or comment
 - an illegal numeric literal such as a trailing underscore or an octal digit `8`
+- more than 64 nested groups, parentheses, unary operators, or conditional operators
 
 **Copied through and left to `javac`, or not treated as the subject:**
 
 - ordinary comparisons (`age >= 18`)
+- `++i`, `(int) raw`, and `holder.new Inner()` when they are not the subject or operand of a group. The same forms written inside a subject call's argument list are ordinary Java and are kept
 - binary operators to the left of a postfix subject (`a + b (>= 0)` compares `b`)
-- checked exceptions thrown by a subject or operand (the generated supplier does not declare them, so `javac` rejects the output)
-- a subject of only `null` (`var` cannot infer it)
+- a checked exception thrown by an operand (the predicate lambda cannot declare it)
+- an operand that names a local variable which is not effectively final (the predicate lambda captures it)
 
 **Recognized only in the simple form:**
 
@@ -244,7 +259,7 @@ The detail text says what was expected. `line()` and `column()` are 1-based posi
 
 ## 10. Differences from ordinary Java
 
-| Topic | Ordinary Java | GCE 0.2 |
+| Topic | Ordinary Java | GCE 0.2.1 |
 | --- | --- | --- |
 | Repeating a subject | The programmer writes it again | The subject is written once and evaluated once |
 | `age (>= 18 && <= 65)` | Syntax error | Grouped comparison |
@@ -252,18 +267,20 @@ The detail text says what was expected. `line()` and `column()` are 1-based posi
 | Range written as `>= 18 < 65` | Not an expression of that shape | One comparison, operand `18 < 65` |
 | `&&` inside `?:` at group depth 0 | `?:` can contain `&&` | `&&` ends the operand; parenthesize to keep it |
 | `instanceof` in a group | Not this syntax | Syntax error until 0.3 |
-| Checked exceptions from the subject | Propagate | Do not propagate through the generated supplier |
-| Identity of `==` | Java rules | Same rules, because the subject is stored with `var` |
+| Checked exceptions from the subject | Propagate | Propagate, because the subject is an argument |
+| Checked exceptions from an operand | Propagate | Rejected by `javac`; the predicate is a lambda |
+| Local used only as the subject | May be reassigned | May be reassigned |
+| Local used in an operand | May be reassigned | Must be effectively final |
+| Identity of `==` | Java rules | Same rules: primitives select a primitive chain, references select `RefChain` |
 
 ## 11. Translation shape
 
-The normative runtime effect is section 6. The concrete shape used by version 0.2 is an implementation choice, not part of the language:
+The normative runtime effect is section 6. The concrete shape used by version 0.2.1 is an implementation choice, not part of the language:
 
 ```java
-(((java.util.function.Supplier<Boolean>) () -> {
-    var $gce$N = (subject);
-    return (predicate using $gce$N);
-}).get())
+(dev.gce.runtime.GceEval.of((subject)).is($gce$N -> (predicate using $gce$N)))
 ```
 
-`$gce$N` is chosen so it is not an identifier already spelled in the compilation unit. A later version may lower a group differently, including in bytecode, as long as section 6 still holds.
+`of` is overloaded on `boolean`, `int`, `long`, `double`, and a generic reference type. The lambda is the argument of `is`, not of an overload, so choosing the chain does not depend on the lambda body. `$gce$N` is chosen so it is not an identifier already spelled in the compilation unit. A later version may lower a group differently, including in bytecode, as long as section 6 still holds.
+
+Version 0.2 stored the subject in `var` inside a `Supplier`. That captured every local the subject named. 0.2.1 does not emit that supplier. `dev.gce.runtime.Gce.test` remains available for direct calls and still boxes; the translator does not emit it.

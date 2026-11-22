@@ -5,7 +5,7 @@
 
     <groupId>dev.gce</groupId>
     <artifactId>gce-compiler</artifactId>
-    <version>0.2.0</version>
+    <version>0.2.1</version>
     <name>GCE Compiler Prototype</name>
     <description>Experimental source-to-source translator for Grouped Comparison Expressions.</description>
 

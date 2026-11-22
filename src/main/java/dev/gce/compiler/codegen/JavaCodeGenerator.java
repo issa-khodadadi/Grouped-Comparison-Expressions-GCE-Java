@@ -9,21 +9,17 @@ import dev.gce.compiler.ast.RelationalCondition;
 import java.util.function.BiFunction;
 
 /**
- * Renders a comparison group as a Java expression. The subject is read into a {@code var}
- * inside a supplier, so it keeps its primitive or reference type and is evaluated once,
- * only when the surrounding expression evaluates the supplier.
+ * Renders a comparison group as a Java expression.
+ *
+ * <p>The subject is the argument of {@code GceEval.of}, so it is evaluated in the
+ * enclosing expression. The predicate lambda only names the chain's parameter.
+ * {@code of} is not invoked when a surrounding {@code &&} or {@code ||} skips the group.
  */
 public final class JavaCodeGenerator {
     public String generate(String subject, ComparisonNode condition, String temp,
                            BiFunction<Integer, Integer, String> operands) {
         String predicate = emit(condition, temp, operands);
-        return "(((java.util.function.Supplier<Boolean>) () -> { var "
-                + temp
-                + " = ("
-                + subject
-                + "); return "
-                + predicate
-                + "; }).get())";
+        return "(dev.gce.runtime.GceEval.of((" + subject + ")).is(" + temp + " -> " + predicate + "))";
     }
 
     private String emit(ComparisonNode node, String temp, BiFunction<Integer, Integer, String> operands) {

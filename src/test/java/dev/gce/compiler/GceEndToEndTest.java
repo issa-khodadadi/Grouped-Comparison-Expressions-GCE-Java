@@ -11,12 +11,13 @@ class GceEndToEndTest {
 
     @Test void translatedProgramMatchesSingleEvaluationJava() {
         String translated = transpiler.transpile(gceProgram());
-        assertFalse(translated.contains("dev.gce.runtime.Gce"));
+        assertFalse(translated.contains("Gce.test"));
+        assertFalse(translated.contains("Supplier"));
         assertFalse(translated.contains("__gce_value"));
+        assertTrue(translated.contains("GceEval.of"));
         assertTrue(translated.contains("\"age (>= 18)\""));
         assertTrue(translated.contains("// age (>= 99)"));
         assertTrue(translated.contains("/* salary (>= 1) */"));
-        assertTrue(translated.contains("var $gce$"));
 
         String expected = """
                 accepted
@@ -105,6 +106,311 @@ class GceEndToEndTest {
                 }
                 """;
         assertEquals("true\n1\n", normalize(JavaRunner.compileAndRun("NestedGce", transpiler.transpile(source))));
+    }
+
+    @Test void reassignedLocalMatchesJava() {
+        String gce = """
+                public class C {
+                    public static void main(String[] args) {
+                        int age = 25;
+                        boolean first = age (>= 18 && <= 65);
+                        age = 10;
+                        boolean second = age (>= 18 && <= 65);
+                        System.out.print(first);
+                        System.out.print(second);
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    public static void main(String[] args) {
+                        int age = 25;
+                        int firstValue = age;
+                        boolean first = firstValue >= 18 && firstValue <= 65;
+                        age = 10;
+                        int secondValue = age;
+                        boolean second = secondValue >= 18 && secondValue <= 65;
+                        System.out.print(first);
+                        System.out.print(second);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void forLoopIndexMatchesJava() {
+        String gce = """
+                public class C {
+                    public static void main(String[] args) {
+                        int sum = 0;
+                        for (int i = 0; i < 10; i++) if (i (>= 3 && <= 5)) sum++;
+                        System.out.print(sum);
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    public static void main(String[] args) {
+                        int sum = 0;
+                        for (int i = 0; i < 10; i++) {
+                            int value = i;
+                            if (value >= 3 && value <= 5) sum++;
+                        }
+                        System.out.print(sum);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void arrayIndexInLoopMatchesJava() {
+        String gce = """
+                public class C {
+                    public static void main(String[] args) {
+                        int[] values = {1, 2, 3, 2};
+                        StringBuilder found = new StringBuilder();
+                        for (int i = 0; i < values.length; i++) if (values[i] (>= 2 && <= 2)) found.append(i);
+                        System.out.print(found);
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    public static void main(String[] args) {
+                        int[] values = {1, 2, 3, 2};
+                        StringBuilder found = new StringBuilder();
+                        for (int i = 0; i < values.length; i++) {
+                            int value = values[i];
+                            if (value >= 2 && value <= 2) found.append(i);
+                        }
+                        System.out.print(found);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void checkedExceptionFromSubjectPropagates() {
+        String gce = """
+                public class C {
+                    static int read() throws Exception { return 4; }
+                    public static void main(String[] args) throws Exception {
+                        System.out.print(read() (>= 0 && <= 10));
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    static int read() throws Exception { return 4; }
+                    public static void main(String[] args) throws Exception {
+                        int value = read();
+                        System.out.print(value >= 0 && value <= 10);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void checkedExceptionInOperandStaysIllegal() {
+        String source = """
+                class OperandThrows {
+                    static int read() throws Exception { return 1; }
+                    boolean m(int n) { return n (>= read()); }
+                }
+                """;
+        JavaRunner.assertDoesNotCompile("OperandThrows", transpiler.transpile(source));
+    }
+
+    @Test void operandThatUsesAReassignedLocalIsStillRejectedByJavac() {
+        String source = """
+                class OperandCapture {
+                    boolean m() {
+                        int i = 1;
+                        int j = 0;
+                        boolean result = i (>= 0 && <= j);
+                        j = 2;
+                        return result;
+                    }
+                }
+                """;
+        JavaRunner.assertDoesNotCompile("OperandCapture", transpiler.transpile(source));
+    }
+
+    @Test void nullLiteralSubjectMatchesJava() {
+        String gce = """
+                public class C {
+                    public static void main(String[] args) {
+                        System.out.print(null (== null));
+                        String s = null;
+                        System.out.print(s (== null));
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    public static void main(String[] args) {
+                        Object value = null;
+                        System.out.print(value == null);
+                        String s = null;
+                        System.out.print(s == null);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void longNearTheDoubleBoundaryStaysIntegral() {
+        String gce = """
+                public class C {
+                    public static void main(String[] args) {
+                        long big = 9007199254740993L;
+                        System.out.print(big (== big));
+                        System.out.print(big (== big + 1));
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    public static void main(String[] args) {
+                        long big = 9007199254740993L;
+                        long value = big;
+                        System.out.print(value == big);
+                        System.out.print(value == big + 1);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void groupInsideMethodArgumentOfASubjectRunsOnce() {
+        String gce = """
+                public class C {
+                    static int calls;
+                    static int age() { calls++; return 25; }
+                    static int id(boolean value) { calls += 10; return value ? 1 : 0; }
+                    public static void main(String[] args) {
+                        System.out.print(id(age() (>= 18 && <= 65)) (>= 1));
+                        System.out.print(calls);
+                        calls = 0;
+                        System.out.print(false && id(age() (>= 18)) (>= 0));
+                        System.out.print(calls);
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    static int calls;
+                    static int age() { calls++; return 25; }
+                    static int id(boolean value) { calls += 10; return value ? 1 : 0; }
+                    public static void main(String[] args) {
+                        int ageValue = age();
+                        boolean inner = ageValue >= 18 && ageValue <= 65;
+                        int outer = id(inner);
+                        System.out.print(outer >= 1);
+                        System.out.print(calls);
+                        calls = 0;
+                        System.out.print(false && id(age() >= 18) >= 0);
+                        System.out.print(calls);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void groupInsideParenthesizedSubjectRunsOnce() {
+        String gce = """
+                public class C {
+                    static int calls;
+                    static int age() { calls++; return 25; }
+                    public static void main(String[] args) {
+                        System.out.print((age() (>= 18 && <= 65) ? 1 : 0) (>= 1));
+                        System.out.print(calls);
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    static int calls;
+                    static int age() { calls++; return 25; }
+                    public static void main(String[] args) {
+                        int ageValue = age();
+                        int selected = (ageValue >= 18 && ageValue <= 65) ? 1 : 0;
+                        System.out.print(selected >= 1);
+                        System.out.print(calls);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void groupInsideArrayIndexOfASubjectRunsOnce() {
+        String gce = """
+                public class C {
+                    static int calls;
+                    static int age() { calls++; return 25; }
+                    public static void main(String[] args) {
+                        int[] values = {5};
+                        System.out.print(values[age() (>= 18) ? 0 : 0] (>= 1));
+                        System.out.print(calls);
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    static int calls;
+                    static int age() { calls++; return 25; }
+                    public static void main(String[] args) {
+                        int[] values = {5};
+                        int ageValue = age();
+                        int selected = values[ageValue >= 18 ? 0 : 0];
+                        System.out.print(selected >= 1);
+                        System.out.print(calls);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void ordinaryJavaInsideASubjectArgumentIsKept() {
+        String gce = """
+                public class C {
+                    static int id(int value) { return value; }
+                    static class Box {
+                        class Inner { int v() { return 4; } }
+                    }
+                    public static void main(String[] args) {
+                        int i = 1;
+                        System.out.print(id(++i) (>= 2));
+                        System.out.print(i);
+                        Box box = new Box();
+                        System.out.print(id(box.new Inner().v()) (>= 4));
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    static int id(int value) { return value; }
+                    static class Box {
+                        class Inner { int v() { return 4; } }
+                    }
+                    public static void main(String[] args) {
+                        int i = 1;
+                        int incremented = id(++i);
+                        System.out.print(incremented >= 2);
+                        System.out.print(i);
+                        Box box = new Box();
+                        int created = id(box.new Inner().v());
+                        System.out.print(created >= 4);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    private void assertSameOutput(String gce, String java) {
+        assertEquals(
+                normalize(JavaRunner.compileAndRun("J", java)),
+                normalize(JavaRunner.compileAndRun("C", transpiler.transpile(gce))));
     }
 
     private static String gceProgram() {

@@ -5,12 +5,13 @@ import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
- * Optional runtime helper for callers who already have a supplier and a predicate.
+ * Optional helper for callers who already have a supplier and a predicate.
  *
- * <p>The version 0.2 transpiler does <strong>not</strong> emit calls to this class.
- * A generic {@code Supplier}/{@code Predicate} pair boxes primitive subjects and can
- * change the meaning of {@code ==} and {@code !=}. Generated code instead evaluates the
- * subject into a {@code var} inside a {@code Supplier<Boolean>}, which keeps the original type.
+ * <p><strong>The translator does not emit calls to this class.</strong>
+ * Generated groups call {@link GceEval#of}. {@code test} boxes a primitive subject
+ * because {@code T} is a reference type. After that boxing, {@code ==} and {@code !=}
+ * are reference comparisons, so two {@code int} values of {@code 1000} can compare
+ * unequal. Do not use {@code test} as the meaning of a grouped comparison.
  */
 public final class Gce {
     private Gce() {}

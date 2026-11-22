@@ -84,7 +84,9 @@ public final class GceBenchmark {
         JavaFileObject file = new SimpleJavaFileObject(URI.create("mem:///" + name + ".java"), JavaFileObject.Kind.SOURCE) {
             @Override public CharSequence getCharContent(boolean ignore) { return source; }
         };
-        Boolean ok = compiler.getTask(null, manager, null, List.of("--release", "25"), null, List.of(file)).call();
+        Boolean ok = compiler.getTask(null, manager, null,
+                List.of("--release", "25", "--class-path", System.getProperty("java.class.path")),
+                null, List.of(file)).call();
         if (!Boolean.TRUE.equals(ok)) {
             throw new IllegalStateException("benchmark source failed to compile");
         }

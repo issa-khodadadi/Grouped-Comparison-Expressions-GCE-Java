@@ -1,6 +1,6 @@
 # Architecture
 
-Version 0.2 is a preprocessor in front of unmodified `javac`. The prototype does not patch the JDK, register a `javac` plugin, or claim that the compiler understands GCE.
+Version 0.2.1 is a preprocessor in front of unmodified `javac`. The prototype does not patch the JDK, register a `javac` plugin, or claim that the compiler understands GCE.
 
 ## Pipeline
 
@@ -17,7 +17,7 @@ GceRecognizer           (postfix subject immediately before a comparison group)
 ComparisonParser        (group AST + operand expression check)
     |  operand spans that contain '(' are translated again
     v
-JavaCodeGenerator       (Supplier<Boolean> + var)
+JavaCodeGenerator       (GceEval.of(subject).is(temp -> predicate))
     |
     v
 original source with only those spans replaced
@@ -37,7 +37,7 @@ javac --release 25
 | `dev.gce.compiler.parser` | Group grammar, subject scan, bracket matching |
 | `dev.gce.compiler.ast` | `&&`, `||`, parentheses, and one relational test |
 | `dev.gce.compiler.codegen` | Java expression rendering |
-| `dev.gce.runtime` | Optional `Gce.test` helper. The translator does not call it |
+| `dev.gce.runtime` | `GceEval`, used by generated code. `Gce.test` remains for direct calls and boxes |
 
 The AST is a sealed interface. Code generation walks that tree. It does not concatenate boolean operators while parsing, so precedence is a property of the tree (`&&` nodes under `||` nodes) and of the parentheses the generator prints.
 
@@ -56,7 +56,7 @@ A full Java grammar is not required to copy the unaffected text. The lexer still
 
 The recognizer walks tokens from left to right. At each token that can start a postfix expression it scans a subject: name, literal, `this`, `super`, `new`, a balanced `(...)`, then `.name`, calls, and `[...]`. A call whose `(` is a comparison group stops the subject. The group parser then builds the AST. The scan continues after that group, so `a (>= 1) && b (>= 2)` becomes two independent translations.
 
-Method arguments and array indexes are consumed by matching `()`, `[]`, and `{}`. Their interior is not a second Java parser. A group nested in an argument is still found, because the scan visits every token and only jumps forward across a group it has already translated.
+Method arguments and array indexes are consumed by matching `()`, `[]`, and `{}`. Their interior is not a second Java parser. When a postfix expression is itself a group subject, the recognizer commits that whole span and does not visit the tokens inside it again. The subject text is therefore translated by a second pass before it is placed in `GceEval.of`. That pass is what rewrites a group inside a call argument, a parenthesized expression, or an array index. A group that is not inside a larger subject is still found by the left-to-right walk.
 
 ## One evaluation without a leaked local
 
@@ -68,22 +68,20 @@ if (flag && subject (>= 0)) { }
 
 The hoist would evaluate `subject` even when `flag` is false.
 
-A block is not an expression in Java, so the temporary cannot be declared at the use site. The generated supplier is an expression, it runs only when evaluated, and `var` inside it keeps the static type:
+A block is not an expression in Java, so the temporary cannot be declared at the use site. Putting the subject inside a lambda would also force every local it names to be effectively final, and a checked exception could not leave the lambda. Version 0.2.1 evaluates the subject as an argument and binds the temporary as the predicate parameter:
 
 ```java
-(((java.util.function.Supplier<Boolean>) () -> {
-    var $gce$0 = (subject);
-    return ($gce$0 >= (18)) && ($gce$0 <= (65));
-}).get())
+(dev.gce.runtime.GceEval.of((subject)).is($gce$0 ->
+        ($gce$0 >= (18)) && ($gce$0 <= (65))))
 ```
 
-`Gce.test(Supplier, Predicate)` was the 0.1 approach. The predicate's parameter type is erased to a reference type, so a primitive subject is boxed. `int == Integer` then becomes reference equality for some values (for example two boxed `1000`s) instead of numeric equality. Version 0.2 does not emit that call. The helper remains for callers who already hold a supplier and accept boxing; its Javadoc says so.
+`of` has a primitive overload for `boolean`, `int`, `long`, and `double`, plus one generic reference overload. The lambda is not part of that overload, so an `int` subject does not become an `Integer`, and an `Integer` subject is not unboxed before the predicate runs. `Gce.test(Supplier, Predicate)` was the 0.1 approach and still boxes. The translator does not emit it. Its Javadoc says so.
 
-The temporary's name is `$gce$` plus a number. Every identifier in the file is reserved first, then each generated name. An operand that mentions `$gce$0` still refers to the user's variable.
+The parameter name is `$gce$` plus a number. Every identifier in the file is reserved first, then each generated name. An operand that mentions `$gce$0` still refers to the user's variable. An operand that mentions some other local is still inside the lambda, so that local has to be effectively final.
 
 ## Nested groups
 
-Operand offsets are slices of the current fragment. If the slice contains `(`, it is translated with the same reserved-name set and with positions shifted back to the original file. `flag (== (next() (>= 1)))` therefore becomes an outer supplier whose operand is an inner supplier. Depth is capped at 32.
+Operand offsets, and the subject span, are slices of the current fragment. If the slice contains `(`, it is translated with the same reserved-name set and with positions shifted back to the original file. `flag (== (next() (>= 1)))` therefore becomes an outer `GceEval.of` whose predicate calls an inner `of`. `id(age() (>= 18)) (>= 1)` rewrites the subject first, so `age()` is the inner call. Groups, parentheses, unary operators, and conditional operators are limited to 64 levels. The parser checks that limit before it recurses.
 
 ## Tests
 
@@ -95,7 +93,7 @@ Operand offsets are slices of the current fragment. If the slice contains `(`, i
 
 ## Measurement
 
-JMH is not a dependency. One run is not a distribution, and the prototype's question was whether the lowering is correct before tuning it. On the JDK 25.0.2 workstation used for this release:
+JMH is not a dependency. One run is not a distribution. The numbers below are from the 0.2 supplier lowering on one JDK 25.0.2 workstation. Version 0.2.1 has not been remeasured.
 
 | Measurement | Result |
 | --- | --- |
@@ -112,7 +110,7 @@ mvn -q test-compile
 java -cp target/classes;target/test-classes dev.gce.compiler.GceBenchmark
 ```
 
-The translated loop was slower in that run. Nothing here claims a speedup. A later lowering can avoid the supplier when a cheaper form has the same evaluation rules.
+The translated loop was slower in that 0.2 run. Nothing here claims a speedup. The 0.2.1 chain is a different allocation, and those milliseconds do not describe it.
 
 ## Build
 
