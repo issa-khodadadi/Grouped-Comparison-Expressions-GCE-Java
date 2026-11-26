@@ -1,12 +1,12 @@
 # GCE 1.0.0 release report
 
-Date of the clean build: 2026-11-24, 16:52:25 +03:30. JDK observed on this workstation: the compiler used by Maven is release 25 (`Build-Jdk-Spec: 25`). This workspace is not a git checkout, so this report does not cite a commit id.
+Date of the clean build: 2026-11-24, 16:52:25 +03:30. JDK observed on this workstation: the compiler used by Maven is release 25 (`Build-Jdk-Spec: 25`). This report records the release evidence supplied with the project archive. The originally supplied archive contained line-ending-only working-tree differences in several files; the release candidate normalizes the Unix `mvnw` script issue by removing the incomplete wrapper rather than retaining a broken launcher.
 
 ## Verdict
 
 The translator earns the 1.0.0 version for the behavior this repository implements and tests. It is a source-to-source preprocessor in front of unmodified `javac`. It is not a Java language change and not an OpenJDK candidate.
 
-One release blocker is outside the compiler: this tree has no `LICENSE` file. The maintainer has not selected a license here. The README states that. Do not publish the jar as Apache-2.0 or as any other license until a `LICENSE` file is added.
+The project license is Apache License, Version 2.0. The root `LICENSE` file contains the license text, the README identifies the license, and `pom.xml` declares the license metadata. No `NOTICE` file is required by the current project contents: the only declared library dependency is JUnit in test scope, and Maven build plugins are not bundled into the application JAR.
 
 ## What changed
 
@@ -86,7 +86,6 @@ Comments outside the replaced span are kept. Comments inside the span are not co
 - `dev.gce.runtime.Gce` and `GceEval` remain in the jar for direct calls. Generated code does not call them. `Gce.test` still boxes.
 - No JMH result is part of this release. The numbers in `docs/ARCHITECTURE.md` are one historical 0.3.0 `nanoTime` run.
 - The body of `docs/GCE-TECHNICAL-PAPER.md` is the 0.2.1 paper. The banner says so. The current design is the specification and the changelog.
-- No `LICENSE` file.
 
 ## Tests and commands
 
@@ -118,6 +117,18 @@ Created-By: Maven JAR Plugin 3.4.2
 
 `META-INF/maven/dev.gce/gce-compiler/pom.properties`: `groupId=dev.gce`, `artifactId=gce-compiler`, `version=1.0.0`.
 
-## License decision needed
+## License
 
-Adding a license would change the public release terms. This report does not add one. Confirm which license, if any, should be in the tree before the jar is published.
+The project is licensed under the Apache License, Version 2.0. The complete text is in the root `LICENSE` file. `pom.xml` declares the same license and the README links to it. No copyright-holder name or year has been added because those details were not supplied; the standard Apache license text is otherwise retained.
+
+
+## Packaging review note
+
+The project retains `mvnw` and `mvnw.cmd`.
+The Maven Wrapper configuration and launcher files should be
+verified before release to ensure that both Unix and Windows
+environments can invoke Maven successfully.
+
+## Independent review environment limitation
+
+The review container used OpenJDK 21 and did not have Maven installed. It therefore could not rerun `mvn clean verify` or independently reproduce the JDK 25 compile-and-run check. The 49-test result and standalone `javac --release 25` result above are retained from the supplied release report and should be confirmed by the updated JDK 25 GitHub Actions workflow before creating the public release tag.
