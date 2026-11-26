@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 package dev.gce.compiler;
 
 import dev.gce.compiler.lexer.Lexer;

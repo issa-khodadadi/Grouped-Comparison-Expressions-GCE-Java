@@ -3,7 +3,7 @@
 **Status:** version 1.0.0, implemented by this repository.  
 **This is not a JLS change and it is not implemented by `javac`.**
 
-Sections marked **Implemented** describe behavior covered by the translator and tests. Sections marked **Proposed** are not accepted by version 0.2.
+Sections marked **Implemented** describe behavior covered by the translator and tests. Any explicitly unsupported behavior is listed in section 8.
 
 ## 1. Overview
 
@@ -83,7 +83,7 @@ Implemented subjects include:
 - `new`, including a simple type-argument list: `new java.util.ArrayList<java.util.List<String>>().size()`
 - a parenthesized expression: `(low + high)`
 
-**Not implemented:** pulling a binary operator into the subject. `a + b (>= 0)` has subject `b`. The sum is written `(a + b) (>= 0)`.
+**Not implemented:** pulling an unparenthesized binary operator into the subject. `a + b (>= 0)` is rejected with `GceSyntaxException`; it is never rewritten as a comparison of `b`. To compare the sum, write `(a + b) (>= 0)`.
 
 ### 3.3 Operand (**Implemented**)
 
@@ -112,11 +112,11 @@ Accepted operand forms that version 0.2.1 rejected:
 - casts
 - prefix and postfix `++` and `--`
 - qualified instance creation (`holder.new Inner()`)
-- `instanceof`, including one pattern name
+- `instanceof`, including type patterns, `final` type patterns, unnamed patterns (`_`), and record patterns (including nested record patterns)
 
 ### 3.4 Not accepted
 
-Record patterns, unnamed patterns, and an `instanceof` group whose operand is not a type name plus at most one pattern variable are outside the implemented grammar. `a + b (>= 0)` still compares `b`. The sum is `(a + b) (>= 0)`.
+Guard patterns (`when`) are not a separately tested form. Pattern-variable scope is exactly the scope Java assigns to the generated `instanceof` expression; GCE does not extend it across later comparison terms. An unparenthesized binary, shift, or bitwise expression immediately before a group is rejected; parenthesize the complete subject.
 
 ## 4. Precedence and associativity (**Implemented**)
 

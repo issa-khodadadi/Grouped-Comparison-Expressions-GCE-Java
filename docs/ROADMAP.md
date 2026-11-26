@@ -8,7 +8,7 @@ Version 1.0.0 is a preprocessor with a tested semantics and an honest boundary. 
 - Comparison AST with Java `&&` / `||` precedence
 - Operand expressions beyond a single name
 - One evaluation of the subject, including a group nested in an operand
-- Type-preserving `var` inside a supplier, so `==` is not silently changed by boxing. 0.2.1 replaced that supplier because it captured locals
+- Type-preserving `var` lowering was introduced during 0.2 development; the 0.2.1 supplier-based design was later replaced by switch-expression lowering in 0.3.0
 - In-memory JDK 25 compile-and-run tests
 - Specification that separates implemented syntax from later syntax
 
@@ -47,8 +47,10 @@ Version 1.0.0 is a preprocessor with a tested semantics and an honest boundary. 
 
 - IDE highlighting and formatting
 - A source map from generated lines back to GCE lines
-- Pattern matching, record patterns, and `switch` expressions as operands
+- Additional pattern forms, guard patterns, and broader `switch`-expression contexts
 - Splitting `>>` and `>>>` when one character closes a type argument and the next is an operator
+- Guard-pattern support and broader pattern-flow analysis beyond the tested forms
+- A more complete parser for Java switch expressions in every operand context
 - Any proposal text aimed at amber-spec or the JLS
 
 ## Non-goals

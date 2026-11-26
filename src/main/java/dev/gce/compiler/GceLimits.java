@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 package dev.gce.compiler;
 
 /** Shared bounds for recursive translation. Exceeding one throws {@link GceSyntaxException}. */
