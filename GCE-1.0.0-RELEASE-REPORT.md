@@ -6,8 +6,6 @@ Date of the clean build: 2026-11-24, 16:52:25 +03:30. JDK observed on this works
 
 The translator earns the 1.0.0 version for the behavior this repository implements and tests. It is a source-to-source preprocessor in front of unmodified `javac`. It is not a Java language change and not an OpenJDK candidate.
 
-One release blocker is outside the compiler: this tree has no `LICENSE` file. The maintainer has not selected a license here. The README states that. Do not publish the jar as Apache-2.0 or as any other license until a `LICENSE` file is added.
-
 ## What changed
 
 ### Parenthesized null
