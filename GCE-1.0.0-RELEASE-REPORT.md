@@ -124,7 +124,10 @@ The project is licensed under the Apache License, Version 2.0. The complete text
 
 ## Packaging review note
 
-The supplied archive did not contain `.mvn/wrapper/maven-wrapper.jar`, although it included `mvnw` and `mvnw.cmd`. Those scripts therefore could not launch Maven (`MavenWrapperMain` was missing). The release candidate removes the incomplete wrapper scripts and updates GitHub Actions to invoke the Maven installation on the hosted runner directly (`mvn -B verify`). The README no longer claims that a Maven Wrapper is included.
+The project retains `mvnw` and `mvnw.cmd`.
+The Maven Wrapper configuration and launcher files should be
+verified before release to ensure that both Unix and Windows
+environments can invoke Maven successfully.
 
 ## Independent review environment limitation
 
