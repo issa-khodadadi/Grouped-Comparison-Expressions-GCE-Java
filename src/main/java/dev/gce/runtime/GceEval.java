@@ -6,7 +6,7 @@ import java.util.function.LongPredicate;
 import java.util.function.Predicate;
 
 /**
- * Runtime used by version 0.2.1 generated code.
+ * Retained runtime from version 0.2.1. Version 1.0.0 does not emit calls to this class.
  *
  * <p>A group is lowered to {@code GceEval.of(subject).is(temp -> predicate)}.
  * {@code of} is called from the enclosing expression, so the subject is an argument:

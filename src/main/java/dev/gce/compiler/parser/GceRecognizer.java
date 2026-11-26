@@ -51,7 +51,9 @@ public final class GceRecognizer {
                     end++;
                 }
                 if (end > cursor && parser.isGroupStart(end)) {
-                    parser.rejectAt(index, prefixMessage(token.type()) + " in a GCE subject");
+                    found.add(translate(index, end));
+                    index = parser.position();
+                    continue;
                 }
                 index++;
                 continue;
@@ -66,7 +68,9 @@ public final class GceRecognizer {
                     end++;
                 }
                 if (parser.isGroupStart(end)) {
-                    parser.rejectAt(index, "casts are not supported in a GCE subject");
+                    found.add(translate(index, end));
+                    index = parser.position();
+                    continue;
                 }
             }
             if (!canStart(token)) {
@@ -79,24 +83,134 @@ public final class GceRecognizer {
                 afterInc++;
             }
             if (afterInc != end && parser.isGroupStart(afterInc)) {
-                parser.rejectAt(end, postfixMessage(tokens.get(end).type()) + " in a GCE subject");
+                found.add(translate(index, afterInc));
+                index = parser.position();
+                continue;
             }
             if (end > index && parser.isGroupStart(end)) {
-                parser.jump(end);
-                ComparisonNode condition = parser.parseGroup();
-                int subjectStart = tokens.get(index).start();
-                int subjectEnd = tokens.get(end - 1).end();
-                int rangeEnd = tokens.get(parser.position() - 1).end();
-                String subject = operands.apply(subjectStart, subjectEnd);
-                String temp = freshName();
-                String code = generator.generate(subject, condition, temp, operands);
-                found.add(new Replacement(subjectStart, rangeEnd, code));
+                found.add(translate(index, end));
                 index = parser.position();
                 continue;
             }
             index++;
         }
         return found;
+    }
+
+    private int includeUnaryPrefixes(int subjectToken) {
+        int start = subjectToken;
+        while (start > 0 && isUnaryPrefixOf(start)) {
+            start--;
+        }
+        return start;
+    }
+
+    private boolean isUnaryPrefixOf(int subjectToken) {
+        Token operator = tokens.get(subjectToken - 1);
+        if (operator.type() != TokenType.PLUS && operator.type() != TokenType.MINUS
+                && operator.type() != TokenType.BANG && operator.type() != TokenType.TILDE) {
+            return false;
+        }
+        return operator.type() == TokenType.BANG || operator.type() == TokenType.TILDE
+                || !endsExpression(subjectToken - 2);
+    }
+
+    private void rejectAmbiguousSubject(int subjectToken) {
+        if (subjectToken == 0) {
+            return;
+        }
+        Token operator = tokens.get(subjectToken - 1);
+        if (!isGluingOperator(operator.type()) || !endsExpression(subjectToken - 2)) {
+            return;
+        }
+        parser.rejectAt(subjectToken - 1,
+                "the operator '" + operator.lexeme() + "' is not part of this GCE subject. "
+                        + "The group would apply only to the expression after the operator. "
+                        + "Parenthesize the full subject, for example (a + b) (>= 0)");
+    }
+
+    private void rejectConstantContext(int subjectToken) {
+        int depth = 0;
+        for (int i = subjectToken - 1; i >= 0; i--) {
+            Token token = tokens.get(i);
+            switch (token.type()) {
+                case RPAREN, RBRACKET, RBRACE -> depth++;
+                case LPAREN, LBRACKET, LBRACE -> {
+                    if (depth == 0) {
+                        if (token.type() == TokenType.LPAREN && isAnnotationArgument(i)) {
+                            parser.rejectAt(subjectToken,
+                                    "a GCE group is not a constant expression and cannot be an annotation value. "
+                                            + "Write the comparison in ordinary Java");
+                        }
+                        return;
+                    }
+                    depth--;
+                }
+                case SEMICOLON -> {
+                    if (depth == 0) {
+                        return;
+                    }
+                }
+                case KEYWORD -> {
+                    if (depth == 0 && "case".equals(token.lexeme())) {
+                        parser.rejectAt(subjectToken,
+                                "a GCE group is not a constant expression and cannot be used in a case label. "
+                                        + "Write the comparison in ordinary Java");
+                    }
+                }
+                default -> {
+                }
+            }
+        }
+    }
+
+    private boolean isAnnotationArgument(int paren) {
+        int name = paren - 1;
+        if (name < 0) {
+            return false;
+        }
+        if (tokens.get(name).type() == TokenType.AT) {
+            return true;
+        }
+        if (tokens.get(name).type() != TokenType.IDENTIFIER) {
+            return false;
+        }
+        return name - 1 >= 0 && tokens.get(name - 1).type() == TokenType.AT;
+    }
+
+    private static boolean isGluingOperator(TokenType type) {
+        return switch (type) {
+            case PLUS, MINUS, STAR, SLASH, PERCENT, SHL, SHR, USHR, BITAND, BITOR, BITXOR -> true;
+            default -> false;
+        };
+    }
+
+    private boolean endsExpression(int index) {
+        if (index < 0 || index >= tokens.size()) {
+            return false;
+        }
+        Token token = tokens.get(index);
+        return switch (token.type()) {
+            case IDENTIFIER, NUMBER, STRING, CHAR, TEXT_BLOCK, BOOLEAN, NULL, RPAREN, RBRACKET,
+                    PLUSPLUS, MINUSMINUS -> true;
+            case KEYWORD -> token.lexeme().equals("this") || token.lexeme().equals("super");
+            default -> false;
+        };
+    }
+
+    private boolean isNullLiteral(int subjectToken, int groupToken) {
+        int nulls = 0;
+        for (int i = subjectToken; i < groupToken; i++) {
+            switch (tokens.get(i).type()) {
+                case LPAREN, RPAREN -> {
+                }
+                case NULL -> nulls++;
+                default -> {
+                    return false;
+                }
+            }
+        }
+        return nulls == 1;
     }
 
     private static boolean isIncDec(TokenType type) {
@@ -108,16 +222,20 @@ public final class GceRecognizer {
                 || type == TokenType.BANG || type == TokenType.TILDE;
     }
 
-    private static String prefixMessage(TokenType type) {
-        return type == TokenType.PLUSPLUS
-                ? "prefix increment is not supported"
-                : "prefix decrement is not supported";
-    }
-
-    private static String postfixMessage(TokenType type) {
-        return type == TokenType.PLUSPLUS
-                ? "postfix increment is not supported"
-                : "postfix decrement is not supported";
+    private Replacement translate(int subjectToken, int groupToken) {
+        subjectToken = includeUnaryPrefixes(subjectToken);
+        rejectAmbiguousSubject(subjectToken);
+        rejectConstantContext(subjectToken);
+        boolean nullLiteral = isNullLiteral(subjectToken, groupToken);
+        parser.jump(groupToken);
+        ComparisonNode condition = parser.parseGroup();
+        int subjectStart = tokens.get(subjectToken).start();
+        int subjectEnd = tokens.get(groupToken - 1).end();
+        int rangeEnd = tokens.get(parser.position() - 1).end();
+        String subject = operands.apply(subjectStart, subjectEnd);
+        String temp = freshName();
+        return new Replacement(subjectStart, rangeEnd,
+                generator.generate(subject, condition, temp, operands, nullLiteral));
     }
 
     private String freshName() {
@@ -143,8 +261,6 @@ public final class GceRecognizer {
         if (pos == start) {
             return start;
         }
-        boolean sawQualifiedNew = false;
-        int qualifiedAt = -1;
         while (pos < tokens.size() && tokens.get(pos).type() != TokenType.EOF) {
             TokenType type = tokens.get(pos).type();
             if (type == TokenType.DOT) {
@@ -157,8 +273,6 @@ public final class GceRecognizer {
                     if (after < 0) {
                         break;
                     }
-                    sawQualifiedNew = true;
-                    qualifiedAt = pos + 1;
                     pos = after;
                     continue;
                 }
@@ -194,9 +308,6 @@ public final class GceRecognizer {
                 continue;
             }
             break;
-        }
-        if (sawQualifiedNew && parser.isGroupStart(pos)) {
-            parser.rejectAt(qualifiedAt, "qualified instance creation is not supported in a GCE subject");
         }
         return pos;
     }

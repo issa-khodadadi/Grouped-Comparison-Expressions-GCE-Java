@@ -19,8 +19,8 @@ import java.util.Set;
  * unchanged. Text inside comments, string literals, character literals, and text blocks is
  * never treated as a comparison group.
  *
- * <p>This is an experimental preprocessor. It does not modify {@code javac} and it does not
- * accept every Java program. See {@code docs/GCE-LANGUAGE-SPECIFICATION.md}.
+ * <p>Version 1.0.0 emits a switch expression with a {@code var} binding, or {@code Object} for a null literal. It does not modify
+ * {@code javac} and it does not accept every Java program. See {@code docs/GCE-LANGUAGE-SPECIFICATION.md}.
  */
 public final class GceTranspiler {
     /** Translates {@code source}, which may be a compilation unit or a fragment. */

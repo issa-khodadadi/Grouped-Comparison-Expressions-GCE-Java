@@ -134,9 +134,6 @@ final class ComparisonParser {
         try {
             Token open = peek();
             expect(TokenType.LPAREN, "'('");
-            if (peek().isKeyword("instanceof")) {
-                throw error("GCE instanceof is not supported in version 0.2; it is planned for version 0.3");
-            }
             ComparisonNode condition = parseOr();
             expect(TokenType.RPAREN, "')'");
             if (condition == null) {
@@ -175,8 +172,22 @@ final class ComparisonParser {
                 leave();
             }
         }
+        if (peek().isKeyword("instanceof")) {
+            position++;
+            if (isGroupEnd(peek())) {
+                throw error("missing right-hand operand after 'instanceof'");
+            }
+            int operandStart = peek().start();
+            int startToken = position;
+            parseInstancePattern();
+            if (position == startToken) {
+                throw error("missing right-hand operand after 'instanceof'");
+            }
+            rejectTrailingOperandSyntax();
+            return new RelationalCondition("instanceof", operandStart, tokens.get(position - 1).end());
+        }
         if (!peek().isComparisonOperator()) {
-            throw error("expected a comparison operator (==, !=, <, <=, >, >=) or '(' but found " + describe(peek()));
+            throw error("expected a comparison operator (==, !=, <, <=, >, >=, instanceof) or '(' but found " + describe(peek()));
         }
         String operator = peek().lexeme();
         position++;
@@ -202,10 +213,17 @@ final class ComparisonParser {
     private void rejectTrailingOperandSyntax() {
         Token token = peek();
         if (token.type() == TokenType.ARROW) {
-            throw error("lambda expressions are not supported in a GCE operand");
+            position++;
+            parseLambdaBody();
+            return;
         }
         if (token.type() == TokenType.COLONCOLON) {
-            throw error("method references are not supported in a GCE operand");
+            position++;
+            if (!(check(TokenType.IDENTIFIER) || peek().isKeyword("new"))) {
+                throw error("expected a name after '::' but found " + describe(peek()));
+            }
+            position++;
+            return;
         }
         if (isAssignment(token.type())) {
             throw error("assignment expressions are not supported in a GCE operand");
@@ -277,10 +295,7 @@ final class ComparisonParser {
         parseShift();
         while (isRelational(peek().type()) || peek().isKeyword("instanceof")) {
             if (matchKeyword("instanceof")) {
-                parseType();
-                if (peek().type() == TokenType.IDENTIFIER || peek().isKeyword("final")) {
-                    throw error("pattern-matching instanceof is not supported in a GCE operand");
-                }
+                parseInstancePattern();
             } else {
                 position++;
                 parseShift();
@@ -315,8 +330,14 @@ final class ComparisonParser {
     private void parseUnary() {
         TokenType type = peek().type();
         if (type == TokenType.PLUSPLUS || type == TokenType.MINUSMINUS) {
-            throw error((type == TokenType.PLUSPLUS ? "prefix increment" : "prefix decrement")
-                    + " is not supported in a GCE operand");
+            position++;
+            enter();
+            try {
+                parseUnary();
+            } finally {
+                leave();
+            }
+            return;
         }
         if (type == TokenType.PLUS || type == TokenType.MINUS || type == TokenType.BANG || type == TokenType.TILDE) {
             position++;
@@ -336,7 +357,9 @@ final class ComparisonParser {
         while (true) {
             if (match(TokenType.DOT)) {
                 if (peek().isKeyword("new")) {
-                    throw error("qualified instance creation is not supported in a GCE operand");
+                    position++;
+                    parseCreator();
+                    continue;
                 }
                 if (check(TokenType.LT)) {
                     int after = AngleBrackets.skip(tokens, position);
@@ -380,8 +403,16 @@ final class ComparisonParser {
                 continue;
             }
             if (check(TokenType.PLUSPLUS) || check(TokenType.MINUSMINUS)) {
-                throw error((peek().type() == TokenType.PLUSPLUS ? "postfix increment" : "postfix decrement")
-                        + " is not supported in a GCE operand");
+                position++;
+                continue;
+            }
+            if (check(TokenType.COLONCOLON)) {
+                position++;
+                if (!(check(TokenType.IDENTIFIER) || peek().isKeyword("new"))) {
+                    throw error("expected a name after '::' but found " + describe(peek()));
+                }
+                position++;
+                continue;
             }
             break;
         }
@@ -389,8 +420,16 @@ final class ComparisonParser {
 
     private void parsePrimary() {
         if (check(TokenType.LPAREN)) {
+            int afterParen = Delimiters.skip(tokens, position, fullSource, baseOffset);
+            if (afterParen < tokens.size() && tokens.get(afterParen).type() == TokenType.ARROW) {
+                position = afterParen + 1;
+                parseLambdaBody();
+                return;
+            }
             if (isCastPattern(position)) {
-                throw error("casts are not supported in a GCE operand");
+                position = typeParenEnd(position);
+                parseUnary();
+                return;
             }
             enter();
             try {
@@ -408,7 +447,15 @@ final class ComparisonParser {
             return;
         }
         if (matchKeyword("switch")) {
-            throw error("switch expressions are not supported in a GCE operand");
+            if (!check(TokenType.LPAREN)) {
+                throw error("expected '(' after 'switch' but found " + describe(peek()));
+            }
+            position = Delimiters.skip(tokens, position, fullSource, baseOffset);
+            if (!check(TokenType.LBRACE)) {
+                throw error("expected '{' after a switch selector but found " + describe(peek()));
+            }
+            position = Delimiters.skip(tokens, position, fullSource, baseOffset);
+            return;
         }
         if (check(TokenType.IDENTIFIER) || peek().isKeyword("this") || peek().isKeyword("super") || isLiteral(peek())) {
             position++;
@@ -471,6 +518,35 @@ final class ComparisonParser {
             }
         }
         expect(TokenType.RPAREN, "')'");
+    }
+
+    private void parseInstancePattern() {
+        if (matchKeyword("final") && !(check(TokenType.IDENTIFIER)
+                || (peek().type() == TokenType.KEYWORD && Keywords.isPrimitive(peek().lexeme())))) {
+            throw error("expected a type after 'final' but found " + describe(peek()));
+        }
+        parseType();
+        if (check(TokenType.LPAREN)) {
+            position = Delimiters.skip(tokens, position, fullSource, baseOffset);
+            return;
+        }
+        if (check(TokenType.IDENTIFIER) || (check(TokenType.KEYWORD) && "_".equals(peek().lexeme()))) {
+            position++;
+        }
+    }
+
+    private void parseLambdaBody() {
+        enter();
+        try {
+            if (check(TokenType.LBRACE)) {
+                position = Delimiters.skip(tokens, position, fullSource, baseOffset);
+                return;
+            }
+            parseConditional(true);
+            rejectTrailingOperandSyntax();
+        } finally {
+            leave();
+        }
     }
 
     private void parseType() {

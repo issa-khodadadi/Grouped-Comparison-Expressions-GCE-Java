@@ -1,6 +1,6 @@
 # GCE Language Specification
 
-**Status:** version 0.2.1, implemented by this repository.  
+**Status:** version 1.0.0, implemented by this repository.  
 **This is not a JLS change and it is not implemented by `javac`.**
 
 Sections marked **Implemented** describe behavior covered by the translator and tests. Sections marked **Proposed** are not accepted by version 0.2.
@@ -42,7 +42,7 @@ ComparisonOr       ::= ComparisonAnd { "||" ComparisonAnd }
 ComparisonAnd      ::= ComparisonUnary { "&&" ComparisonUnary }
 ComparisonUnary    ::= "(" ComparisonOr ")"
                      | ComparisonOperator Operand
-ComparisonOperator ::= "==" | "!=" | "<" | "<=" | ">" | ">="
+ComparisonOperator ::= "==" | "!=" | "<" | "<=" | ">" | ">=" | "instanceof"
 ```
 
 A `'('` starts a group only when, after any further opening parentheses, the next token is a comparison operator. Otherwise the parentheses keep their existing Java meaning. In particular, `age()` is still a call, and `salary > 5000` is still a normal comparison.
@@ -53,7 +53,7 @@ age()           // call
 (salary > 5000) // ordinary Java
 ```
 
-`value (instanceof String)` matches this shape but is rejected. See section 8.
+`value (instanceof String)`, `value (instanceof String s)`, `value (instanceof String _)`, and `value (instanceof Point(int x, int y))` are grouped comparisons. The operand is copied into `temp instanceof <pattern>`. A record pattern's parentheses are part of that operand. A pattern variable is in scope only where Java would put it in the generated `instanceof` expression.
 
 ### 3.2 Subject (**Implemented**)
 
@@ -104,21 +104,19 @@ Implemented operand forms:
 Rejected operand forms, with a GCE syntax error:
 
 - assignment and compound assignment
+
+Accepted operand forms that version 0.2.1 rejected:
+
 - lambdas and method references
-- `switch` expressions
-- casts (`(int) raw`, `(String) value`)
+- `switch` expressions copied as a selector plus a brace body
+- casts
 - prefix and postfix `++` and `--`
 - qualified instance creation (`holder.new Inner()`)
-- pattern variables after `instanceof` (`instanceof String s`)
-- a GCE `instanceof` operator (section 8)
+- `instanceof`, including one pattern name
 
-### 3.4 Proposed and not accepted
+### 3.4 Not accepted
 
-```ebnf
-ComparisonOperator ::= ... | "instanceof"     (* proposed, 0.3 *)
-```
-
-`obj (instanceof String)` and `obj (instanceof String && != null)` are planned. Version 0.2 reports a syntax error that says `instanceof` is planned for 0.3.
+Record patterns, unnamed patterns, and an `instanceof` group whose operand is not a type name plus at most one pattern variable are outside the implemented grammar. `a + b (>= 0)` still compares `b`. The sum is `(a + b) (>= 0)`.
 
 ## 4. Precedence and associativity (**Implemented**)
 
@@ -164,7 +162,7 @@ Juxtaposition does not create another comparison. `age (>= 18 < 65)` is one term
 
 ## 5. Types (**Implemented by delegation**)
 
-Version 0.2.1 does not type-check. It passes the subject to `dev.gce.runtime.GceEval.of` and lets overload resolution choose a primitive chain (`boolean`, `int`, `long`, `double`) or a reference chain. `javac` then applies the usual rules:
+Version 1.0.0 does not type-check. It binds the subject with `var` and lets `javac` apply the usual rules:
 
 - relational operators unbox numeric wrappers
 - `==` and `!=` on two references compare identity, including `String` and enum constants
@@ -172,11 +170,10 @@ Version 0.2.1 does not type-check. It passes the subject to `dev.gce.runtime.Gce
 - `int == null` remains illegal
 - `Integer >= 0` when the value is null throws `NullPointerException`
 - `!= null && >= 0` does not unbox when the null test is false
-- `char`, `byte`, and `short` subjects widen to `int`
-- `float` subjects widen to `double`. Every `float` value is exactly representable as a `double`
-- a `null` literal is a reference subject
+- `char`, `byte`, `short`, `float`, and `long` subjects keep the type `var` infers. They are not widened by the translator
+- a subject whose tokens are a `null` literal wrapped only in parentheses is bound as `Object`. `(null)` and `((null))` are included. The translator does not decide this by comparing the subject text with `"null"`
 
-There is no separate GCE type lattice. Compiling the translation requires `gce-compiler` on the classpath, because the generated expression calls `GceEval`.
+There is no separate GCE type lattice. The generated expression uses only JDK syntax. The compiler jar is not required to compile or run it.
 
 ## 6. Evaluation (**Implemented**)
 
@@ -187,9 +184,9 @@ For a group that is actually evaluated:
 3. Do not evaluate the right operand of `&&` or `||` when the left operand decides the result.
 4. Evaluate a comparison's operand only when that comparison is reached. The operand runs after the subject.
 
-The group itself is evaluated only when the surrounding Java expression reaches it. `false && next() (>= 0)` does not call `next()`, because `next()` is an argument of the call that the `&&` skips.
+The group itself is evaluated only when the surrounding Java expression reaches it. `false && next() (>= 0)` does not call `next()`, because the switch expression that contains `next()` is the right operand of `&&`.
 
-The subject expression is that argument, so it is type-checked in the enclosing method. A local variable used only as the subject does not have to be effectively final, and a checked exception thrown by the subject propagates. The predicate lambda still captures every local variable named in an operand, and a checked exception thrown by an operand is still illegal.
+The switch block is type-checked in the enclosing method. A local variable used by the subject or by an operand does not have to be effectively final, and a checked exception thrown by either one propagates. That does not relax the rules of a lambda the programmer wrote. A group inside `x -> x (>= 0)` is still inside that lambda.
 
 This is not the same as copying the subject text onto every comparison. That expansion would run side effects once per comparison.
 
@@ -224,28 +221,24 @@ String block = """
 if (age (>= 18)) { }      // this one is a group
 ```
 
+A comment outside the replaced span stays in the output. A comment that sits inside the span, between the first character of the subject and the closing parenthesis of the group, is not copied. `/*keep*/ age /*inside*/ (>= 18) // tail` keeps `/*keep*/` and `// tail`.
+
 ## 8. Unsupported constructs
 
 **Rejected with `GceSyntaxException`:**
 
-- `instanceof` used as the operator of a group
 - a missing operand, a missing parenthesis, or two operands with no operator
-- assignment, lambda, method reference, or `switch` expression in an operand
-- a cast used as a GCE subject or operand
-- prefix or postfix `++` or `--` used as a GCE subject or operand
-- qualified instance creation (`holder.new Inner()`) used as a GCE subject or operand
-- pattern-matching `instanceof` in an operand
+- assignment in an operand
+- an unparenthesized binary, shift, or bitwise operator immediately before the subject, such as `a + b (>= 0)`. Parenthesize the subject: `(a + b) (>= 0)`. `&&` and `||` are not this case; `flag && age (>= 18)` stays valid
+- a group in a `case` label or in an annotation value. The switch lowering is not a constant expression, so the translator reports that instead of emitting code that `javac` would reject later
 - an unclosed string, character literal, text block, or comment
 - an illegal numeric literal such as a trailing underscore or an octal digit `8`
 - more than 64 nested groups, parentheses, unary operators, or conditional operators
 
-**Copied through and left to `javac`, or not treated as the subject:**
+**Copied through and left to `javac`, or not a constant:**
 
 - ordinary comparisons (`age >= 18`)
-- `++i`, `(int) raw`, and `holder.new Inner()` when they are not the subject or operand of a group. The same forms written inside a subject call's argument list are ordinary Java and are kept
-- binary operators to the left of a postfix subject (`a + b (>= 0)` compares `b`)
-- a checked exception thrown by an operand (the predicate lambda cannot declare it)
-- an operand that names a local variable which is not effectively final (the predicate lambda captures it)
+- a `static final` initializer that contains a group. The field compiles when the rest of the program is legal, and it is not a constant variable
 
 **Recognized only in the simple form:**
 
@@ -259,28 +252,24 @@ The detail text says what was expected. `line()` and `column()` are 1-based posi
 
 ## 10. Differences from ordinary Java
 
-| Topic | Ordinary Java | GCE 0.2.1 |
+| Topic | Ordinary Java | GCE 1.0.0 |
 | --- | --- | --- |
 | Repeating a subject | The programmer writes it again | The subject is written once and evaluated once |
 | `age (>= 18 && <= 65)` | Syntax error | Grouped comparison |
 | `age >= 18 && age <= 65` | Unchanged | Unchanged; this is not GCE |
 | Range written as `>= 18 < 65` | Not an expression of that shape | One comparison, operand `18 < 65` |
 | `&&` inside `?:` at group depth 0 | `?:` can contain `&&` | `&&` ends the operand; parenthesize to keep it |
-| `instanceof` in a group | Not this syntax | Syntax error until 0.3 |
-| Checked exceptions from the subject | Propagate | Propagate, because the subject is an argument |
-| Checked exceptions from an operand | Propagate | Rejected by `javac`; the predicate is a lambda |
-| Local used only as the subject | May be reassigned | May be reassigned |
-| Local used in an operand | May be reassigned | Must be effectively final |
-| Identity of `==` | Java rules | Same rules: primitives select a primitive chain, references select `RefChain` |
+| `instanceof` in a group | Not this syntax until translated | `instanceof`, including a type pattern, `_`, or a record pattern |
+| Checked exceptions from the subject or an operand | Propagate | Propagate. The switch block is in the enclosing method |
+| Local used by the subject or an operand | May be reassigned | May be reassigned |
+| Identity of `==` | Java rules | Same rules. `var` keeps the subject type |
 
 ## 11. Translation shape
 
-The normative runtime effect is section 6. The concrete shape used by version 0.2.1 is an implementation choice, not part of the language:
+The normative runtime effect is section 6. The concrete shape used by version 1.0.0 is an implementation choice, not part of the language. It is not a constant expression:
 
 ```java
-(dev.gce.runtime.GceEval.of((subject)).is($gce$N -> (predicate using $gce$N)))
+(switch (0) { default -> { var $gce$N = (subject); yield (predicate using $gce$N); } })
 ```
 
-`of` is overloaded on `boolean`, `int`, `long`, `double`, and a generic reference type. The lambda is the argument of `is`, not of an overload, so choosing the chain does not depend on the lambda body. `$gce$N` is chosen so it is not an identifier already spelled in the compilation unit. A later version may lower a group differently, including in bytecode, as long as section 6 still holds.
-
-Version 0.2 stored the subject in `var` inside a `Supplier`. That captured every local the subject named. 0.2.1 does not emit that supplier. `dev.gce.runtime.Gce.test` remains available for direct calls and still boxes; the translator does not emit it.
+`$gce$N` is chosen so it is not an identifier already spelled in the compilation unit. The switch selector is the constant `0` and has no side effect. A null-literal subject uses `Object` instead of `var`. Version 0.2.1 called `GceEval.of(subject).is(...)`. The translator does not emit that call. `dev.gce.runtime.Gce.test` remains available for direct calls and still boxes.

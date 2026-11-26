@@ -1,4 +1,4 @@
-# GCE Compiler Prototype
+# GCE Compiler — Grouped Comparison Expressions for Java
 
 Grouped Comparison Expressions (GCE) is an experimental syntax for applying several comparisons to one Java expression without writing that expression again.
 
@@ -44,14 +44,13 @@ var ageValue = age;
 ageValue >= 18 && ageValue <= 65
 ```
 
-A local variable cannot be declared in the middle of an arbitrary expression without changing when the subject runs. `flag && age (>= 18)` must not read `age` when `flag` is false. Version 0.2.1 therefore calls a small runtime method. The subject is an argument, so it runs only when that call runs:
+A local variable cannot be declared in the middle of an arbitrary expression without changing when the subject runs. `flag && age (>= 18)` must not read `age` when `flag` is false. Version 1.0.0 binds the subject inside a switch expression. The switch is evaluated only when the surrounding expression reaches it, and the block is part of the enclosing method, so it is not a lambda:
 
 ```java
-(dev.gce.runtime.GceEval.of((age)).is($gce$0 ->
-        (($gce$0 >= (18)) && ($gce$0 <= (65)))))
+(switch (0) { default -> { var $gce$0 = (age); yield (($gce$0 >= (18)) && ($gce$0 <= (65))); } })
 ```
 
-`of` is overloaded for `boolean`, `int`, `long`, `double`, and reference types. A primitive stays unboxed, so `int == Integer` is numeric and `Integer == Integer` stays identity. `char`, `byte`, and `short` widen to `int`. `float` widens to `double`. The translator picks `$gce$0`, `$gce$1`, … and skips any identifier already present in the file.
+`var` keeps the subject type, so `int == Integer` stays numeric and `Integer == Integer` stays identity. In the enclosing method, a local used by the subject or an operand does not have to be effectively final, and a checked exception propagates. A group written inside a lambda the programmer wrote still follows Java's lambda rules. The translator picks `$gce$0`, `$gce$1`, … and skips any identifier already present in the file. A subject that is a `null` literal, including `(null)` and `((null))`, is bound as `Object`. The decision uses the token stream, not a string comparison.
 
 `dev.gce.runtime.Gce.test` is still in the jar for direct calls. The translator does not emit it. That helper boxes its subject, and after boxing `==` can disagree with primitive equality.
 
@@ -70,7 +69,7 @@ Recognizer: postfix subject + comparison group
 Comparison AST  --->  subjects and operands re-scanned for nested groups
         |
         v
-Java expression: GceEval.of(subject).is(temp -> predicate)
+Java expression: switch (0) { default -> { var temp = subject; yield predicate; } }
         |
         v
 Unchanged surrounding source
@@ -102,12 +101,12 @@ mvn clean verify
 Translate one file. The program writes the second path as UTF-8 and creates its folder:
 
 ```bash
-java -jar target/gce-compiler-0.2.1.jar Input.java out/Input.java
-javac --release 25 -cp target/gce-compiler-0.2.1.jar out/Input.java
-java -cp "out;target/gce-compiler-0.2.1.jar" Input
+java -jar target/gce-compiler-1.0.0.jar Input.java out/Input.java
+javac --release 25 out/Input.java
+java -cp out Input
 ```
 
-On Unix the classpath separator is `:`. The translated file calls `dev.gce.runtime.GceEval`, so the jar has to be on the classpath at compile time and at run time.
+Translated source uses only the JDK. It does not call `GceEval`, so the compiler jar is not required on the `javac` or `java` classpath. `dev.gce.runtime.Gce.test` remains in the jar for a direct call and still boxes.
 
 The output file name has to match a `public class` inside it. `public class Input` cannot be compiled from `Output.java`.
 
@@ -132,9 +131,9 @@ java -cp target/classes;target/test-classes dev.gce.compiler.GceBenchmark
 
 On Windows the classpath separator is `;`. On Unix it is `:`.
 
-## What version 0.2.1 implements
+## What version 1.0.0 implements
 
-- Several comparisons of one subject, with `==`, `!=`, `<`, `<=`, `>`, `>=`
+- Several comparisons of one subject, with `==`, `!=`, `<`, `<=`, `>`, `>=`, and `instanceof` (a type pattern, a record pattern, or `_`)
 - `&&` and `||`, with Java precedence and left associativity, plus nested parentheses
 - Operands that are literals, names, fields, calls, array access, arithmetic, bitwise operators, relational operators, equality, and `?:`
 - Comparison with another variable, including `null`, `boolean`, `String`, and enum constants
@@ -151,22 +150,20 @@ On Windows the classpath separator is `;`. On Unix it is `:`.
 
 The translator is not a Java compiler and does not accept every Java program.
 
-- A subject is a postfix expression. `a + b (>= 0)` compares `b`, not the sum. Write `(a + b) (>= 0)`.
+- A subject is a postfix expression, plus a directly attached unary `+`, `-`, `!`, or `~`. `(a + b) (>= 0)` compares the sum. `a + b (>= 0)` is a syntax error. It is not rewritten as a comparison of `b`.
+- The translated group is not a JLS constant expression. A group in a `case` label or an annotation value is a syntax error. A `static final` field initialized with a group is not a constant variable.
 - `age (>= 18 < 65)` is `age >= (18 < 65)`, not a range. A range is `age (>= 18 && < 65)`.
 - At parenthesis depth zero, `&&` and `||` always separate comparisons. Put them in parentheses when they belong to an operand: `(>= (ready && paid))`.
-- `instanceof` is not a GCE operator yet. `value (instanceof String)` is a syntax error. `instanceof` inside a parenthesized operand is ordinary Java and is limited to a type, without a pattern variable.
-- Casts, prefix and postfix `++`/`--`, and qualified `holder.new Inner()` are rejected when they are the GCE subject or operand. The same tokens in ordinary Java, including inside a subject call's argument list, are left unchanged.
-- Lambdas, method references, assignments, and `switch` expressions are rejected as operands.
-- A checked exception from the subject propagates. A checked exception from an operand does not: the predicate is a lambda, and `javac` rejects it.
-- An operand that names a local variable still captures that variable. The local has to be effectively final. The subject does not.
-- Comments that occur inside the replaced span, between the subject and the closing parenthesis of the group, are not copied into the output.
-- A `>>` or `>>>` token is not split when only part of it closes a type-argument list.
+- Casts, prefix and postfix `++`/`--`, qualified `holder.new Inner()`, lambdas, method references, and `switch` expressions are accepted as subjects or operands. An assignment in an operand is still a syntax error.
+- In the enclosing method, a checked exception from the subject or an operand propagates, and the local need not be effectively final. Inside a lambda the programmer wrote, Java's capture and checked-exception rules still apply.
+- Comments outside the replaced span are kept. A comment inside the span, such as `age /*inside*/ (>= 18)`, is not copied.
+- A `>>` or `>>>` token is not split when only part of it closes a type-argument list. A shift written as an operand, such as `n (>= flags >> 1)`, is kept.
 - More than 64 nested groups, parentheses, unary operators, or conditional operators is a syntax error.
-- Translation expands the source and allocates one small chain object whenever a group is evaluated. A single JDK 25.0.2 workstation run of the older 0.2 supplier, not of this lowering, grew 1,000 groups from 24,812 characters to 135,482 and took about 11 ms after warmup. Those figures are not a JMH result and are not a claim about 0.2.1.
+- Version 1.0.0 does not publish a performance number. `GceBenchmark` is a manual `nanoTime` program and is not JMH.
 
 ## Roadmap
 
-See [docs/ROADMAP.md](docs/ROADMAP.md). Version 0.3 is the place for `instanceof`, checked-exception transparency, and a realistic look at `javac` integration.
+See [docs/ROADMAP.md](docs/ROADMAP.md). Integration into `javac` is not part of this release.
 
 ## License
 

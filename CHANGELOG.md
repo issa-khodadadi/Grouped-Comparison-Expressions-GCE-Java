@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.0.0 — 2026-11-24
+
+The 0.3.0 switch lowering stays. This release closes the correctness holes that blocked calling it 1.0.
+
+- A subject that is a `null` literal wrapped in any number of parentheses is bound as `Object`. The check is on tokens, so `(null)` and `((null))` compile.
+- An unparenthesized arithmetic, shift, or bitwise operator immediately before a group is a `GceSyntaxException`. `a + b (>= 0)` is no longer translated as a comparison of `b`. `(a + b) (>= 0)` is unchanged. `flag && age (>= 18)` is unchanged.
+- A directly attached unary `+`, `-`, `!`, or `~` is part of the subject.
+- A group in a `case` label or an annotation value is rejected. The switch form is not a constant expression, and the translator does not hand that failure to `javac`.
+- `instanceof` operands accept a type pattern, `final`, `_`, and a record pattern, including a nested record pattern. The pattern text is copied through.
+- End-to-end tests cover parenthesized null, one-evaluation of a parenthesized sum, multi-parameter lambdas, nested lambdas, method references, and record patterns.
+- Comments inside the replaced span are still dropped. That is the preservation policy, and a test locks it. Comments outside the span stay.
+- No performance number is part of this release.
+
+## 0.3.0 — 2026-11-24
+
+The translation no longer uses a lambda or `GceEval`.
+
+- A group is a switch expression: `switch (0) { default -> { var $gce$N = (subject); yield predicate; } }`. The block is part of the enclosing method. A local used by the subject or an operand need not be effectively final, and a checked exception from either one propagates. `false &&` still skips the switch, so the subject stays lazy. `var` keeps the subject type. A `null` literal is bound as `Object`.
+- `instanceof` is a group operator, including a single pattern variable (`instanceof String s`).
+- Casts, prefix and postfix `++`/`--`, qualified `holder.new Inner()`, lambdas, method references, and `switch` expressions are accepted as subjects or operands. Assignment in an operand is still rejected.
+- Generated source no longer depends on the compiler jar at compile time or run time. `Gce.test` remains available and still boxes.
+- This is not a change to `javac` or to the Java language.
+
 ## 0.2.1 — 2026-11-22
 
 Semantic and reliability fixes for the 0.2 translator. No new group operators.

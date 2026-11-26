@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Manual measurement for version 0.2. Not part of the test suite.
+ * Manual measurement for the current switch lowering. Not part of the test suite and not a JMH result.
  * Run: {@code java -cp target/classes;target/test-classes dev.gce.compiler.GceBenchmark}
  */
 public final class GceBenchmark {

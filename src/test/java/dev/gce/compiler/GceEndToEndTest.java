@@ -14,7 +14,8 @@ class GceEndToEndTest {
         assertFalse(translated.contains("Gce.test"));
         assertFalse(translated.contains("Supplier"));
         assertFalse(translated.contains("__gce_value"));
-        assertTrue(translated.contains("GceEval.of"));
+        assertTrue(translated.contains("switch (0)"));
+        assertFalse(translated.contains("GceEval"));
         assertTrue(translated.contains("\"age (>= 18)\""));
         assertTrue(translated.contains("// age (>= 99)"));
         assertTrue(translated.contains("/* salary (>= 1) */"));
@@ -45,6 +46,7 @@ class GceEndToEndTest {
                 false
                 true
                 true
+                1
                 true
                 true
                 true
@@ -211,29 +213,323 @@ class GceEndToEndTest {
         assertSameOutput(gce, java);
     }
 
-    @Test void checkedExceptionInOperandStaysIllegal() {
-        String source = """
-                class OperandThrows {
+    @Test void checkedExceptionInOperandPropagates() {
+        String gce = """
+                public class C {
                     static int read() throws Exception { return 1; }
-                    boolean m(int n) { return n (>= read()); }
+                    public static void main(String[] args) throws Exception {
+                        int n = 4;
+                        System.out.print(n (>= 0 && <= read()));
+                    }
                 }
                 """;
-        JavaRunner.assertDoesNotCompile("OperandThrows", transpiler.transpile(source));
+        String java = """
+                public class J {
+                    static int read() throws Exception { return 1; }
+                    public static void main(String[] args) throws Exception {
+                        int n = 4;
+                        int value = n;
+                        System.out.print(value >= 0 && value <= read());
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
     }
 
-    @Test void operandThatUsesAReassignedLocalIsStillRejectedByJavac() {
-        String source = """
-                class OperandCapture {
-                    boolean m() {
+    @Test void operandThatUsesAReassignedLocalMatchesJava() {
+        String gce = """
+                public class C {
+                    public static void main(String[] args) {
                         int i = 1;
                         int j = 0;
                         boolean result = i (>= 0 && <= j);
                         j = 2;
-                        return result;
+                        System.out.print(result);
+                        System.out.print(j);
                     }
                 }
                 """;
-        JavaRunner.assertDoesNotCompile("OperandCapture", transpiler.transpile(source));
+        String java = """
+                public class J {
+                    public static void main(String[] args) {
+                        int i = 1;
+                        int j = 0;
+                        int value = i;
+                        boolean result = value >= 0 && value <= j;
+                        j = 2;
+                        System.out.print(result);
+                        System.out.print(j);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void castIncrementAndQualifiedCreationMatchJava() {
+        String gce = """
+                public class C {
+                    static class Box {
+                        class Inner {}
+                    }
+                    public static void main(String[] args) {
+                        Object raw = Integer.valueOf(4);
+                        System.out.print(((Integer) raw) (>= 4));
+                        int i = 1;
+                        System.out.print(++i (>= 2));
+                        System.out.print(i);
+                        int j = 1;
+                        System.out.print(j++ (>= 1));
+                        System.out.print(j);
+                        Box box = new Box();
+                        System.out.print(box.new Inner() (!= null));
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    static class Box {
+                        class Inner {}
+                    }
+                    public static void main(String[] args) {
+                        Object raw = Integer.valueOf(4);
+                        Integer cast = (Integer) raw;
+                        System.out.print(cast >= 4);
+                        int i = 1;
+                        int incremented = ++i;
+                        System.out.print(incremented >= 2);
+                        System.out.print(i);
+                        int j = 1;
+                        int posted = j++;
+                        System.out.print(posted >= 1);
+                        System.out.print(j);
+                        Box box = new Box();
+                        Box.Inner created = box.new Inner();
+                        System.out.print(created != null);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void instanceofGroupMatchesJava() {
+        String gce = """
+                public class C {
+                    public static void main(String[] args) {
+                        Object value = "hi";
+                        System.out.print(value (instanceof String));
+                        System.out.print(value (instanceof String s && != null));
+                        System.out.print(value (instanceof Integer));
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    public static void main(String[] args) {
+                        Object value = "hi";
+                        Object first = value;
+                        System.out.print(first instanceof String);
+                        Object second = value;
+                        System.out.print(second instanceof String s && second != null);
+                        Object third = value;
+                        System.out.print(third instanceof Integer);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void lambdaBodiesCanContainGroups() {
+        String gce = """
+                public class C {
+                    public static void main(String[] args) {
+                        int[] values = {-1, 2, 3};
+                        long count = java.util.Arrays.stream(values).filter(x -> x (>= 0)).count();
+                        long blocks = java.util.Arrays.stream(values).filter(x -> { return x (>= 2); }).count();
+                        long typed = java.util.Arrays.stream(values).boxed()
+                                .filter((Integer x) -> x (>= 2)).count();
+                        System.out.print(count);
+                        System.out.print(blocks);
+                        System.out.print(typed);
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    public static void main(String[] args) {
+                        int[] values = {-1, 2, 3};
+                        long count = java.util.Arrays.stream(values).filter(x -> x >= 0).count();
+                        long blocks = java.util.Arrays.stream(values).filter(x -> { return x >= 2; }).count();
+                        long typed = java.util.Arrays.stream(values).boxed()
+                                .filter((Integer x) -> x >= 2).count();
+                        System.out.print(count);
+                        System.out.print(blocks);
+                        System.out.print(typed);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void parenthesizedNullSubjectsMatchJava() {
+        String gce = """
+                public class C {
+                    public static void main(String[] args) {
+                        System.out.print(null (== null));
+                        System.out.print((null) (== null));
+                        System.out.print(((null)) (== null));
+                        String value = null;
+                        System.out.print(value (== null));
+                        System.out.print(value (!= null));
+                        String other = "x";
+                        System.out.print(other (!= null));
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    public static void main(String[] args) {
+                        Object bare = null;
+                        System.out.print(bare == null);
+                        Object one = null;
+                        System.out.print(one == null);
+                        Object two = null;
+                        System.out.print(two == null);
+                        String value = null;
+                        System.out.print(value == null);
+                        System.out.print(value != null);
+                        String other = "x";
+                        System.out.print(other != null);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void parenthesizedArithmeticSubjectIsEvaluatedOnce() {
+        String gce = """
+                public class C {
+                    static int calls;
+                    static int tick(int value) { calls++; return value; }
+                    public static void main(String[] args) {
+                        System.out.print((tick(2) + tick(3)) (>= 5 && <= 5));
+                        System.out.print(calls);
+                        System.out.print(obj().field (>= 1));
+                        System.out.print(calls);
+                        int[] items = {4};
+                        System.out.print(items[tick(0)] (>= 4));
+                        System.out.print(calls);
+                    }
+                    static Holder obj() { calls++; return new Holder(); }
+                    static class Holder { int field = 1; }
+                }
+                """;
+        String java = """
+                public class J {
+                    static int calls;
+                    static int tick(int value) { calls++; return value; }
+                    public static void main(String[] args) {
+                        int sum = tick(2) + tick(3);
+                        System.out.print(sum >= 5 && sum <= 5);
+                        System.out.print(calls);
+                        Holder holder = obj();
+                        System.out.print(holder.field >= 1);
+                        System.out.print(calls);
+                        int[] items = {4};
+                        int item = items[tick(0)];
+                        System.out.print(item >= 4);
+                        System.out.print(calls);
+                    }
+                    static Holder obj() { calls++; return new Holder(); }
+                    static class Holder { int field = 1; }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void lambdasAndMethodReferencesMatchJava() {
+        String gce = """
+                public class C {
+                    public static void main(String[] args) {
+                        java.util.function.Predicate<Integer> nonNegative = x -> x (>= 0);
+                        java.util.function.BiPredicate<Integer, Integer> atLeast = (x, y) -> x (>= y);
+                        java.util.function.Predicate<String> nonempty = (String x) -> x.length() (> 0);
+                        java.util.function.Predicate<Integer> block = x -> { return x (>= 0); };
+                        java.util.function.Function<Integer, java.util.function.Predicate<Integer>> nested =
+                                a -> b -> a (>= 0);
+                        System.out.print(nonNegative.test(-1));
+                        System.out.print(nonNegative.test(2));
+                        System.out.print(atLeast.test(2, 1));
+                        System.out.print(atLeast.test(1, 2));
+                        System.out.print(nonempty.test("ab"));
+                        System.out.print(block.test(0));
+                        System.out.print(nested.apply(3).test(1));
+                        System.out.print(java.util.List.of("bb", "c").stream()
+                                .map(String::toUpperCase)
+                                .filter(s -> s.length() (>= 2))
+                                .findFirst().orElse(""));
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    public static void main(String[] args) {
+                        java.util.function.Predicate<Integer> nonNegative = x -> x >= 0;
+                        java.util.function.BiPredicate<Integer, Integer> atLeast = (x, y) -> x >= y;
+                        java.util.function.Predicate<String> nonempty = (String x) -> x.length() > 0;
+                        java.util.function.Predicate<Integer> block = x -> { return x >= 0; };
+                        java.util.function.Function<Integer, java.util.function.Predicate<Integer>> nested =
+                                a -> b -> a >= 0;
+                        System.out.print(nonNegative.test(-1));
+                        System.out.print(nonNegative.test(2));
+                        System.out.print(atLeast.test(2, 1));
+                        System.out.print(atLeast.test(1, 2));
+                        System.out.print(nonempty.test("ab"));
+                        System.out.print(block.test(0));
+                        System.out.print(nested.apply(3).test(1));
+                        System.out.print(java.util.List.of("bb", "c").stream()
+                                .map(String::toUpperCase)
+                                .filter(s -> s.length() >= 2)
+                                .findFirst().orElse(""));
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
+    }
+
+    @Test void recordPatternsMatchJava() {
+        String gce = """
+                public class C {
+                    record Point(int x, int y) {}
+                    record Box(Point p) {}
+                    public static void main(String[] args) {
+                        Object point = new Point(1, 2);
+                        Object text = "hi";
+                        Object box = new Box(new Point(3, 4));
+                        System.out.print(point (instanceof Point(int x, int y)));
+                        System.out.print(point (instanceof String _));
+                        System.out.print(text (instanceof String s));
+                        System.out.print(box (instanceof Box(Point(int x, int y))));
+                        System.out.print(point (instanceof final Point p));
+                    }
+                }
+                """;
+        String java = """
+                public class J {
+                    record Point(int x, int y) {}
+                    record Box(Point p) {}
+                    public static void main(String[] args) {
+                        Object point = new Point(1, 2);
+                        Object text = "hi";
+                        Object box = new Box(new Point(3, 4));
+                        System.out.print(point instanceof Point(int x, int y));
+                        System.out.print(point instanceof String _);
+                        System.out.print(text instanceof String s);
+                        System.out.print(box instanceof Box(Point(int x, int y)));
+                        System.out.print(point instanceof final Point p);
+                    }
+                }
+                """;
+        assertSameOutput(gce, java);
     }
 
     @Test void nullLiteralSubjectMatchesJava() {
@@ -417,9 +713,14 @@ class GceEndToEndTest {
         return """
                 public class GceBehavior {
                     static int calls;
+                    static int lists;
                     static int next(int value) { calls++; return value; }
                     static int boom() { throw new RuntimeException("rhs"); }
                     static int side(String name, int value) { System.out.print(name); return value; }
+                    static java.util.ArrayList<java.util.List<String>> freshList() {
+                        lists++;
+                        return new java.util.ArrayList<>();
+                    }
 
                     enum Color { RED, BLUE }
 
@@ -491,7 +792,8 @@ class GceEndToEndTest {
                         System.out.println(empty.address().house() (!= null && >= 0));
                         int[] arr = {1, 2, 3};
                         System.out.println(arr[1] (>= 2 && <= 2));
-                        System.out.println(new java.util.ArrayList<java.util.List<String>>().size() (>= 0 && <= 0));
+                        System.out.println(freshList().size() (>= 0 && <= 0));
+                        System.out.println(lists);
 
                         char ch = 'b';
                         System.out.println(ch (>= 'a' && <= 'z'));
@@ -533,9 +835,14 @@ class GceEndToEndTest {
         return """
                 public class JavaBehavior {
                     static int calls;
+                    static int lists;
                     static int next(int value) { calls++; return value; }
                     static int boom() { throw new RuntimeException("rhs"); }
                     static int side(String name, int value) { System.out.print(name); return value; }
+                    static java.util.ArrayList<java.util.List<String>> freshList() {
+                        lists++;
+                        return new java.util.ArrayList<>();
+                    }
 
                     enum Color { RED, BLUE }
 
@@ -611,8 +918,9 @@ class GceEndToEndTest {
                         System.out.println(noHouse != null && noHouse >= 0);
                         int[] arr = {1, 2, 3};
                         System.out.println(arr[1] >= 2 && arr[1] <= 2);
-                        System.out.println(new java.util.ArrayList<java.util.List<String>>().size() >= 0
-                                && new java.util.ArrayList<java.util.List<String>>().size() <= 0);
+                        java.util.ArrayList<java.util.List<String>> once = freshList();
+                        System.out.println(once.size() >= 0 && once.size() <= 0);
+                        System.out.println(lists);
 
                         char ch = 'b';
                         System.out.println(ch >= 'a' && ch <= 'z');

@@ -1,6 +1,6 @@
 # Roadmap
 
-Version 0.2.1 is a preprocessor with a tested semantics and an honest boundary. It is a base for language-extension experiments, not a JDK patch.
+Version 1.0.0 is a preprocessor with a tested semantics and an honest boundary. It is not a JDK patch.
 
 ## Done in 0.2
 
@@ -19,23 +19,29 @@ Version 0.2.1 is a preprocessor with a tested semantics and an honest boundary. 
 - Casts, `++`/`--`, and qualified `new` are explicit syntax errors in subject and operand position.
 - Parser nesting is capped at 64.
 
-## Version 0.3
+## Done in 0.3.0
 
-These are the next design problems, in the order they block a more serious prototype.
+- The subject is bound with `var` inside a switch-expression block. Operand locals need not be effectively final, and checked exceptions from operands propagate.
+- `instanceof` groups, including one pattern name.
+- Casts, `++`/`--`, qualified `new`, lambdas, method references, and `switch` expressions in subject or operand position.
 
-1. **`instanceof` groups.** `shape (instanceof Circle || instanceof Rectangle)` needs a type-test grammar, not another relational operator pasted onto a value. Pattern variables (`instanceof Circle c`) need a scope rule. This stays out until that grammar exists.
+## Done in 1.0.0
 
-2. **Checked exceptions from operands.** A subject exception propagates as of 0.2.1. An operand is still inside the predicate lambda, so a checked exception there is rejected by `javac`. Sneaky-throw is not a substitute; it would make the output lie about the method's throws clause.
+- Parenthesized `null` subjects bind as `Object`.
+- `a + b (>= 0)` is a diagnostic. The parenthesized sum remains the way to compare the sum.
+- `case` labels and annotation values that contain a group are diagnostics.
+- Record patterns and `_` are copied into the `instanceof` operand.
+- Lambdas with several parameters, nested lambdas, and method references have compile-and-run tests.
 
-3. **Operand capture.** A local named only by the subject may be reassigned. A local named by an operand is still captured and must be effectively final.
+## Still open
 
-4. **Cheaper lowering, measured with JMH.** 0.2.1 allocates one chain object per evaluated group. The 0.2 supplier numbers are not a measurement of that chain. If a statement-position temporary or a bytecode lowering is attempted, JMH belongs in the comparison.
+1. **A precedence walk that accepts `a + b (>= 0)` as the sum.** 1.0.0 rejects it so the meaning cannot change silently. Accepting it has to stop at `&&` and `||`.
 
-5. **Subjects that are not postfix expressions.** `(a + b) (>= 0)` works. `a + b (>= 0)` does not treat the sum as the subject. Extending the subject leftward through binary operators needs a real precedence walk so `flag && a + b (>= 0)` does not swallow the `&&`.
+2. **Comments inside a group.** They sit in the replaced span and are dropped on purpose.
 
-6. **Comments inside a group.** They are currently inside the replaced span and disappear. A translation that keeps them has to thread trivia from the lexer through the generator.
+3. **`javac` integration, as an experiment.** The path is still "rewrite, then compile". A compiler plugin sees Java, not GCE, unless the rewrite happens first. That experiment would not mean OpenJDK had accepted the feature.
 
-7. **`javac` integration, as an experiment.** The viable path is still "rewrite, then compile". A `javac` plugin or a `com.sun.source.util.Plugin` would see Java, not GCE, unless the rewrite happens first. Exploring that boundary is useful. Claiming that OpenJDK has accepted the feature would not be.
+4. **A JMH comparison.** `GceBenchmark` is not part of the 1.0.0 claim.
 
 ## Explicitly later
 
