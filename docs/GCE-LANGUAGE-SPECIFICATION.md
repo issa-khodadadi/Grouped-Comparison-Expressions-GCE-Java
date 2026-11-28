@@ -1,6 +1,6 @@
 # GCE Language Specification
 
-**Status:** version 1.0.0, implemented by this repository.  
+**Status:** version 1.0.0-rc1, implemented by this repository. This is a release candidate, not a final 1.0.0.  
 **This is not a JLS change and it is not implemented by `javac`.**
 
 Sections marked **Implemented** describe behavior covered by the translator and tests. Any explicitly unsupported behavior is listed in section 8.
@@ -114,7 +114,31 @@ Accepted operand forms that version 0.2.1 rejected:
 - qualified instance creation (`holder.new Inner()`)
 - `instanceof`, including type patterns, `final` type patterns, unnamed patterns (`_`), and record patterns (including nested record patterns)
 
-### 3.4 Not accepted
+### 3.4 Several subjects (**Implemented**)
+
+Each group has one subject. Groups combine with the same `&&` and `||` as ordinary Java boolean expressions, including mixed operators and parentheses. The count of groups, and the count of comparisons inside each group, is not fixed.
+
+```java
+if (a)(>= 1 && <= 10 && != 5)
+        && (b)(== 3)
+        && (c)(> 0 && < 100 && != 50 && != 75) {
+    accept();
+}
+```
+
+`(a)`, `(b)`, and `(c)` are three subjects. The first group has three comparisons, the second has one, and the third has four. `&&` and `||` between groups are Java's, so `||` is looser than `&&` unless parentheses say otherwise. Each subject runs once, and only when evaluation reaches that group.
+
+The `(` after `if` or `while` may be the first subject's `(`. The comparisons and any later `&&` or `||` terms are still the condition. The same form works for `do`/`while`. A condition that is already wrapped, such as `if ((a)(>= 1) && (b)(== 3))`, is the same expression. So is a group written in an ordinary expression:
+
+```java
+boolean open = (a)(>= 1 && <= 10) && (b)(== 3);
+return (a)(>= 1) || (b)(== 3);
+for (; (a)(>= 1) && (b)(== 3); ) { }
+```
+
+`switch (` and `synchronized (` are not boolean headers. A chain written after those parentheses is not pulled into the selector. Put the chain in one expression that is already inside the parentheses, or use it in an `if`.
+
+### 3.5 Not accepted
 
 Guard patterns (`when`) are not a separately tested form. Pattern-variable scope is exactly the scope Java assigns to the generated `instanceof` expression; GCE does not extend it across later comparison terms. An unparenthesized binary, shift, or bitwise expression immediately before a group is rejected; parenthesize the complete subject.
 
@@ -162,7 +186,7 @@ Juxtaposition does not create another comparison. `age (>= 18 < 65)` is one term
 
 ## 5. Types (**Implemented by delegation**)
 
-Version 1.0.0 does not type-check. It binds the subject with `var` and lets `javac` apply the usual rules:
+Version 1.0.0-rc1 does not type-check. It binds the subject with `var` and lets `javac` apply the usual rules:
 
 - relational operators unbox numeric wrappers
 - `==` and `!=` on two references compare identity, including `String` and enum constants
@@ -252,7 +276,7 @@ The detail text says what was expected. `line()` and `column()` are 1-based posi
 
 ## 10. Differences from ordinary Java
 
-| Topic | Ordinary Java | GCE 1.0.0 |
+| Topic | Ordinary Java | GCE 1.0.0-rc1 |
 | --- | --- | --- |
 | Repeating a subject | The programmer writes it again | The subject is written once and evaluated once |
 | `age (>= 18 && <= 65)` | Syntax error | Grouped comparison |
@@ -266,7 +290,7 @@ The detail text says what was expected. `line()` and `column()` are 1-based posi
 
 ## 11. Translation shape
 
-The normative runtime effect is section 6. The concrete shape used by version 1.0.0 is an implementation choice, not part of the language. It is not a constant expression:
+The normative runtime effect is section 6. The concrete shape used by version 1.0.0-rc1 is an implementation choice, not part of the language. It is not a constant expression:
 
 ```java
 (switch (0) { default -> { var $gce$N = (subject); yield (predicate using $gce$N); } })

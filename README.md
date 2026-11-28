@@ -23,7 +23,17 @@ if (person.getAddress().getHouseNumber() (!= null && >= 0)) {
 }
 ```
 
-The subject is evaluated once. `&&` and `||` still short-circuit. Ordinary Java can sit beside the new syntax:
+The subject is evaluated once. `&&` and `||` still short-circuit. Several subjects can share one condition, and each subject still runs only when that group is reached:
+
+```java
+if (a)(>= 1 && <= 10 && != 5)
+        && (b)(== 3)
+        && (c)(> 0 && < 100 && != 50 && != 75) {
+    System.out.println("here");
+}
+```
+
+`(a)` has three comparisons, `(b)` has one, and `(c)` has four. The `(` after `if` is the first subject's parenthesis; the translator keeps the whole chain inside the `if`. Ordinary Java can sit beside the new syntax:
 
 ```java
 if (person.getAge() (>= 18 && <= 65)
@@ -44,7 +54,7 @@ var ageValue = age;
 ageValue >= 18 && ageValue <= 65
 ```
 
-A local variable cannot be declared in the middle of an arbitrary expression without changing when the subject runs. `flag && age (>= 18)` must not read `age` when `flag` is false. Version 1.0.0 binds the subject inside a switch expression. The switch is evaluated only when the surrounding expression reaches it, and the block is part of the enclosing method, so it is not a lambda:
+A local variable cannot be declared in the middle of an arbitrary expression without changing when the subject runs. `flag && age (>= 18)` must not read `age` when `flag` is false. Version 1.0.0-rc1 binds the subject inside a switch expression. The switch is evaluated only when the surrounding expression reaches it, and the block is part of the enclosing method, so it is not a lambda:
 
 ```java
 (switch (0) { default -> { var $gce$0 = (age); yield (($gce$0 >= (18)) && ($gce$0 <= (65))); } })
@@ -101,7 +111,7 @@ mvn clean verify
 Translate one file. The program writes the second path as UTF-8 and creates its folder:
 
 ```bash
-java -jar target/gce-compiler-1.0.0.jar Input.java out/Input.java
+java -jar target/gce-compiler-1.0.0-rc1.jar Input.java out/Input.java
 javac --release 25 out/Input.java
 java -cp out Input
 ```
@@ -131,9 +141,12 @@ java -cp target/classes;target/test-classes dev.gce.compiler.GceBenchmark
 
 On Windows the classpath separator is `;`. On Unix it is `:`.
 
-## What version 1.0.0 implements
+## What version 1.0.0-rc1 implements
+
+This is a release candidate, not a final 1.0.0.
 
 - Several comparisons of one subject, with `==`, `!=`, `<`, `<=`, `>`, `>=`, and `instanceof` (a type pattern, a record pattern, or `_`)
+- Any number of independent groups in one condition, joined by `&&` or `||`, including an `if` or `while` whose parenthesis is the first subject
 - `&&` and `||`, with Java precedence and left associativity, plus nested parentheses
 - Operands that are literals, names, fields, calls, array access, arithmetic, bitwise operators, relational operators, equality, and `?:`
 - Comparison with another variable, including `null`, `boolean`, `String`, and enum constants
@@ -159,7 +172,8 @@ The translator is not a Java compiler and does not accept every Java program.
 - Comments outside the replaced span are kept. A comment inside the span, such as `age /*inside*/ (>= 18)`, is not copied.
 - A `>>` or `>>>` token is not split when only part of it closes a type-argument list. A shift written as an operand, such as `n (>= flags >> 1)`, is kept.
 - More than 64 nested groups, parentheses, unary operators, or conditional operators is a syntax error.
-- Version 1.0.0 does not publish a performance number. `GceBenchmark` is a manual `nanoTime` program and is not JMH.
+- A chain after `switch (` or `synchronized (` is not pulled into that header. Write the chain where a boolean expression is already legal, or inside parentheses that already enclose every term.
+- Version 1.0.0-rc1 does not publish a performance number. `GceBenchmark` is a manual `nanoTime` program and is not JMH. It is not a production JDK change.
 
 ## Roadmap
 

@@ -1,5 +1,9 @@
 # GCE 1.0.0 release report
 
+> Historical record of the build labeled 1.0.0 on 2026-11-24.
+> The current artifact is the release candidate **1.0.0-rc1**, not a final 1.0.0.
+> See `CHANGELOG.md` and `docs/RELEASE-NOTES-1.0.0-rc1.md`.
+
 Date of the clean build: 2026-11-24, 16:52:25 +03:30. JDK observed on this workstation: the compiler used by Maven is release 25 (`Build-Jdk-Spec: 25`). This report records the release evidence supplied with the project archive. The originally supplied archive contained line-ending-only working-tree differences in several files; the release candidate normalizes the Unix `mvnw` script issue by removing the incomplete wrapper rather than retaining a broken launcher.
 
 ## Verdict

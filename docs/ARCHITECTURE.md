@@ -1,6 +1,6 @@
 # Architecture
 
-Version 1.0.0 is a preprocessor in front of unmodified `javac`. It does not patch the JDK, register a `javac` plugin, or claim that the compiler understands GCE.
+Version 1.0.0-rc1 is a release candidate of a preprocessor in front of unmodified `javac`. It does not patch the JDK, register a `javac` plugin, or claim that the compiler understands GCE. It is not a final 1.0.0.
 
 ## Pipeline
 
@@ -55,6 +55,8 @@ A full Java grammar is not required to copy the unaffected text. The lexer still
 ## Subject scan
 
 The recognizer walks tokens from left to right. At each token that can start a postfix expression it scans a subject: name, literal, `this`, `super`, `new`, a balanced `(...)`, then `.name`, calls, and `[...]`. A call whose `(` is a comparison group stops the subject. The group parser then builds the AST. The scan continues after that group, so `a (>= 1) && b (>= 2)` becomes two independent translations.
+
+When the `(` after `if` or `while` is itself the first subject's `(`, that parenthesis would also close the first generated switch expression. A later `&&` or `||` would then sit outside the header, which `javac` rejects. The recognizer treats the following expression as part of the same condition and emits one parenthesized boolean expression, so the header is `if ((groupA) && (groupB))`. Each group is still its own switch expression. A condition that already encloses every term, and a chain in an ordinary expression or in a `for` test between semicolons, is left as separate in-place replacements. `switch` and `synchronized` selectors are not boolean headers and are not rewritten this way.
 
 Method arguments and array indexes are consumed by matching `()`, `[]`, and `{}`. Their interior is not a second Java parser. When a postfix expression is itself a group subject, the recognizer commits that whole span and does not visit the tokens inside it again. The subject text is therefore translated by a second pass before it is placed in the switch expression. That pass is what rewrites a group inside a call argument, a parenthesized expression, or an array index. A group that is not inside a larger subject is still found by the left-to-right walk.
 

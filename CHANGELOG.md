@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0-rc1 — 2026-11-26
+
+Release candidate. This is not a final 1.0.0 and it is not a claim that GCE is part of Java.
+
+- Several independent comparison groups can share one condition. Each group keeps its own subject, and that subject is still evaluated once. The number of groups and the number of comparisons in each group are not fixed.
+- `&&` and `||` between groups follow Java precedence and associativity. Parentheses still override that. A group is skipped when the surrounding operator short-circuits.
+- An `if` or `while` (including `do`/`while`) whose `(` is the first subject's `(` now keeps the rest of the condition inside those parentheses. The previous output closed the header on the first switch expression, so `javac` reported `illegal start of expression`, `not a statement`, and `';' expected` on the following `&&`.
+- Groups that were already inside one pair of parentheses, and ordinary Java beside a group, are unchanged.
+
 ## 1.0.0 — 2026-11-24
 
 The 0.3.0 switch lowering stays. This release closes the correctness holes that blocked calling it 1.0.

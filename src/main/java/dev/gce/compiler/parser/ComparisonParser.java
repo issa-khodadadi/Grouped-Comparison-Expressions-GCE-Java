@@ -28,6 +28,8 @@ final class ComparisonParser {
     private final int baseOffset;
     private int position;
     private int depth;
+    /** True only while skipping a header condition that is ordinary Java around the groups. */
+    private boolean allowAssignment;
 
     ComparisonParser(List<Token> tokens, String fullSource, int baseOffset) {
         this.tokens = tokens;
@@ -110,6 +112,9 @@ final class ComparisonParser {
         if (index >= tokens.size()) {
             return false;
         }
+        if (tokens.get(index).type() == TokenType.LPAREN && isGroupStart(index)) {
+            return false;
+        }
         Token token = tokens.get(index);
         return switch (token.type()) {
             case IDENTIFIER, NUMBER, STRING, CHAR, TEXT_BLOCK, BOOLEAN, NULL, LPAREN, BANG, TILDE, PLUSPLUS, MINUSMINUS -> true;
@@ -132,6 +137,8 @@ final class ComparisonParser {
 
     ComparisonNode parseGroup() {
         enter();
+        boolean savedAssignment = allowAssignment;
+        allowAssignment = false;
         try {
             Token open = peek();
             expect(TokenType.LPAREN, "'('");
@@ -142,7 +149,97 @@ final class ComparisonParser {
             }
             return condition;
         } finally {
+            allowAssignment = savedAssignment;
             leave();
+        }
+    }
+
+    /**
+     * The left-hand expression is already consumed. Skip infix operators, {@code instanceof},
+     * and {@code ?:} that continue it, including groups and parenthesized subexpressions.
+     * Stops at the statement or delimiter that follows the expression.
+     */
+    void skipExpressionContinuation() {
+        boolean savedAssignment = allowAssignment;
+        allowAssignment = true;
+        try {
+            parseAfterPrimary();
+        } finally {
+            allowAssignment = savedAssignment;
+        }
+    }
+
+    /** Infix continuation of a completed primary. Source text is kept; this only finds the end. */
+    private void parseAfterPrimary() {
+        while (true) {
+            TokenType type = peek().type();
+            if (type == TokenType.OR) {
+                position++;
+                parseLogicAnd();
+                continue;
+            }
+            if (type == TokenType.AND) {
+                position++;
+                parseBitwiseOr();
+                continue;
+            }
+            if (type == TokenType.BITOR) {
+                position++;
+                parseXor();
+                continue;
+            }
+            if (type == TokenType.BITXOR) {
+                position++;
+                parseBitAnd();
+                continue;
+            }
+            if (type == TokenType.BITAND) {
+                position++;
+                parseEquality();
+                continue;
+            }
+            if (type == TokenType.EQ || type == TokenType.NEQ) {
+                position++;
+                parseRelational();
+                continue;
+            }
+            if (isRelational(type) || peek().isKeyword("instanceof")) {
+                if (matchKeyword("instanceof")) {
+                    parseInstancePattern();
+                } else {
+                    position++;
+                    parseShift();
+                }
+                continue;
+            }
+            if (type == TokenType.SHL || type == TokenType.SHR || type == TokenType.USHR) {
+                position++;
+                parseAdditive();
+                continue;
+            }
+            if (type == TokenType.PLUS || type == TokenType.MINUS) {
+                position++;
+                parseMultiplicative();
+                continue;
+            }
+            if (type == TokenType.STAR || type == TokenType.SLASH || type == TokenType.PERCENT) {
+                position++;
+                parseUnary();
+                continue;
+            }
+            if (type == TokenType.QUESTION) {
+                position++;
+                enter();
+                try {
+                    parseConditional(true);
+                    expect(TokenType.COLON, "':'");
+                    parseConditional(true);
+                } finally {
+                    leave();
+                }
+                continue;
+            }
+            break;
         }
     }
 
@@ -227,7 +324,14 @@ final class ComparisonParser {
             return;
         }
         if (isAssignment(token.type())) {
-            throw error("assignment expressions are not supported in a GCE operand");
+            if (!allowAssignment) {
+                throw error("assignment expressions are not supported in a GCE operand");
+            }
+            while (isAssignment(peek().type())) {
+                position++;
+                parseConditional(true);
+            }
+            return;
         }
     }
 

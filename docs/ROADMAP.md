@@ -1,6 +1,6 @@
 # Roadmap
 
-Version 1.0.0 is a preprocessor with a tested semantics and an honest boundary. It is not a JDK patch.
+Version 1.0.0-rc1 is a release candidate of a preprocessor with a tested semantics and an honest boundary. It is not a final 1.0.0 and it is not a JDK patch.
 
 ## Done in 0.2
 
@@ -32,6 +32,11 @@ Version 1.0.0 is a preprocessor with a tested semantics and an honest boundary. 
 - `case` labels and annotation values that contain a group are diagnostics.
 - Record patterns and `_` are copied into the `instanceof` operand.
 - Lambdas with several parameters, nested lambdas, and method references have compile-and-run tests.
+
+## Done in 1.0.0-rc1
+
+- Any number of independent groups in one boolean expression, each with its own subject and its own comparisons.
+- `if` and `while` keep a following `&&` / `||` chain inside the header when the header parenthesis is the first subject. JDK 25 compiles that expression.
 
 ## Still open
 

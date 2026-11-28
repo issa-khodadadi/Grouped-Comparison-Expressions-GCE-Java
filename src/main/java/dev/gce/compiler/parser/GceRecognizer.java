@@ -228,15 +228,52 @@ public final class GceRecognizer {
         rejectAmbiguousSubject(subjectToken);
         rejectConstantContext(subjectToken);
         boolean nullLiteral = isNullLiteral(subjectToken, groupToken);
+        boolean headerSubject = isHeaderSubject(subjectToken);
         parser.jump(groupToken);
         ComparisonNode condition = parser.parseGroup();
         int subjectStart = tokens.get(subjectToken).start();
         int subjectEnd = tokens.get(groupToken - 1).end();
-        int rangeEnd = tokens.get(parser.position() - 1).end();
+        int groupEnd = tokens.get(parser.position() - 1).end();
         String subject = operands.apply(subjectStart, subjectEnd);
         String temp = freshName();
-        return new Replacement(subjectStart, rangeEnd,
-                generator.generate(subject, condition, temp, operands, nullLiteral));
+        String generated = generator.generate(subject, condition, temp, operands, nullLiteral);
+        int rangeEnd = groupEnd;
+        // The '(' after if/while is this subject's '('. Each group is its own switch
+        // expression, and the ')' that closes the first switch also closes the header.
+        // A following && or || would sit where a statement is required. Pull the rest of
+        // the expression back inside one pair of header parentheses.
+        if (headerSubject && continuesExpression(parser.position())) {
+            parser.skipExpressionContinuation();
+            int chainEnd = tokens.get(parser.position() - 1).end();
+            String tail = operands.apply(groupEnd, chainEnd);
+            generated = "(" + generated + tail + ")";
+            rangeEnd = chainEnd;
+        }
+        return new Replacement(subjectStart, rangeEnd, generated);
+    }
+
+    /** The subject parenthesis is the required parenthesis of {@code if} or {@code while}. */
+    private boolean isHeaderSubject(int subjectToken) {
+        if (subjectToken <= 0 || tokens.get(subjectToken).type() != TokenType.LPAREN) {
+            return false;
+        }
+        Token keyword = tokens.get(subjectToken - 1);
+        return keyword.isKeyword("if") || keyword.isKeyword("while");
+    }
+
+    private boolean continuesExpression(int index) {
+        if (index >= tokens.size()) {
+            return false;
+        }
+        Token token = tokens.get(index);
+        if (token.isKeyword("instanceof")) {
+            return true;
+        }
+        return switch (token.type()) {
+            case AND, OR, BITAND, BITOR, BITXOR, EQ, NEQ, LT, GT, LE, GE,
+                    SHL, SHR, USHR, PLUS, MINUS, STAR, SLASH, PERCENT, QUESTION -> true;
+            default -> false;
+        };
     }
 
     private String freshName() {
